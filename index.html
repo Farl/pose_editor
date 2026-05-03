@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pose Editor</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app" class="app-root">
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <div>
+          <div class="logo-text">PoseEditor</div>
+          <div class="logo-sub">Pose reference helper</div>
+        </div>
+        <div class="version-badge">v1.0</div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="btn-row">
+          <button id="undoBtn" class="btn" disabled>Undo</button>
+          <button id="redoBtn" class="btn" disabled>Redo</button>
+        </div>
+        <div class="btn-row">
+          <button id="resetBtn" class="btn btn-secondary">Reset</button>
+          <button id="mirrorBtn" class="btn btn-secondary">Mirror</button>
+        </div>
+        <button id="downloadBtn" class="btn btn-full">Download PNG</button>
+      </div>
+
+      <div class="sidebar-section">
+        <label class="field-label">Joint size</label>
+        <input id="jointSizeInput" type="range" min="4" max="16" step="1" value="8" />
+      </div>
+
+      <div class="sidebar-section">
+        <label class="field-label">Link thickness</label>
+        <input id="linkScaleInput" type="range" min="0.5" max="3" step="0.1" value="1" />
+      </div>
+
+      <div class="sidebar-section">
+        <label class="field-label">Reference image</label>
+        <input id="imageInput" type="file" accept="image/*" />
+        <button id="generateImageBtn" class="btn btn-full" disabled>Apply pose to image</button>
+        <div id="aiStatus" class="field-hint"></div>
+
+        <div class="preview-grid">
+          <div class="preview-item">
+            <div class="preview-label">Input</div>
+            <div class="preview-frame">
+              <img
+                id="inputImagePreview"
+                alt="Input image"
+                class="preview-img"
+                style="display: none;"
+              />
+            </div>
+          </div>
+          <div class="preview-item">
+            <div class="preview-label">Pose</div>
+            <div class="preview-frame">
+              <img
+                id="posePreview"
+                alt="Pose snapshot"
+                class="preview-img"
+                style="display: none;"
+              />
+            </div>
+          </div>
+          <div class="preview-item">
+            <div class="preview-label">Output</div>
+            <div class="preview-frame">
+              <img
+                id="resultImage"
+                alt="AI pose image"
+                class="preview-img"
+                style="display: none;"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="canvas-area">
+      <div id="instructions" class="instructions-pill">
+        Drag joints to change the pose
+        <button id="closeInstructions" class="pill-close">×</button>
+      </div>
+
+      <div class="canvas-frame">
+        <canvas id="poseCanvas" width="800" height="800"></canvas>
+      </div>
+
+      <div class="canvas-meta">Canvas: 800 × 800</div>
+    </div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
