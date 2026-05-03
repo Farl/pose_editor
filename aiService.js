@@ -8,6 +8,12 @@ const DEFAULT_CONFIG = {
   GITHUB_TOKEN: "",
 };
 
+const FALLBACK_IMAGE_MODELS = [
+  { value: "kontext", label: "kontext (image+edit)", paidOnly: false },
+  { value: "flux", label: "flux", paidOnly: false },
+  { value: "gptimage", label: "gptimage", paidOnly: false },
+];
+
 function getConfig() {
   if (typeof window === "undefined") {
     return { ...DEFAULT_CONFIG };
@@ -41,6 +47,74 @@ function getPrompt() {
 
 function normalizeBaseUrl(url) {
   return url.replace(/\/$/, "");
+}
+
+function parseCostNumber(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function toModelOption(model) {
+  const completionImageCost = parseCostNumber(model?.pricing?.completionImageTokens);
+  const costLabel = completionImageCost !== null ? `${completionImageCost.toExponential(2)} pollen/img` : "cost: n/a";
+  const supportsImageInput = Array.isArray(model?.input_modalities) && model.input_modalities.includes("image");
+  const capability = supportsImageInput ? "image+edit" : "image-gen";
+  const paidTag = model?.paid_only ? " paid" : "";
+  return {
+    value: model.name,
+    label: `${model.name} (${capability}${paidTag}, ${costLabel})`,
+    paidOnly: !!model?.paid_only,
+    supportsImageInput,
+    supportsImageOutput:
+      Array.isArray(model?.output_modalities) && model.output_modalities.includes("image"),
+  };
+}
+
+export async function fetchImageModels() {
+  const config = getConfig();
+  const baseUrl = normalizeBaseUrl(config.POLLINATIONS_API_BASE_URL);
+
+  try {
+    const response = await fetch(`${baseUrl}/image/models`);
+    if (!response.ok) {
+      throw new Error(`Image model fetch failed: ${response.status}`);
+    }
+
+    const catalog = await response.json();
+    if (!Array.isArray(catalog)) {
+      throw new Error("Unexpected model response.");
+    }
+
+    return catalog
+      .filter((model) => model && typeof model.name === "string")
+      .map(toModelOption)
+      .filter((model) => model.supportsImageOutput)
+      .sort((a, b) => a.label.localeCompare(b.label));
+  } catch {
+    return [...FALLBACK_IMAGE_MODELS];
+  }
+}
+
+export function filterImageModelsByCapability(models, { requiresImageInput = true, allowPaid = false } = {}) {
+  return (models || []).filter((model) => {
+    if (!allowPaid && model.paidOnly) return false;
+    if (requiresImageInput && !model.supportsImageInput && model.value !== "kontext") return false;
+    return true;
+  });
+}
+
+export function setSelectedImageModel(modelName) {
+  if (typeof window === "undefined") return;
+  if (!window.POSE_EDITOR_CONFIG) {
+    window.POSE_EDITOR_CONFIG = {};
+  }
+  window.POSE_EDITOR_CONFIG.POLLINATIONS_IMAGE_MODEL = modelName;
 }
 
 function getApiKey(config) {

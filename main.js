@@ -1,7 +1,12 @@
 import { createDefaultPose, clonePose, mirrorPose } from "./pose.js";
 import { SkeletonCanvas } from "./skeletonCanvas.js";
 import { initSidebar } from "./sidebar.js";
-import { generatePoseImage } from "./aiService.js";
+import {
+  fetchImageModels,
+  filterImageModelsByCapability,
+  generatePoseImage,
+  setSelectedImageModel,
+} from "./aiService.js";
 
 const STORAGE_KEY = "poseEditorState_v1";
 
@@ -13,6 +18,11 @@ const aiStatusEl = document.getElementById("aiStatus");
 const generateImageBtn = document.getElementById("generateImageBtn");
 const inputImageEl = document.getElementById("inputImagePreview");
 const posePreviewEl = document.getElementById("posePreview");
+const imageModelSelect = document.getElementById("imageModelSelect");
+const allowPaidModelsInput = document.getElementById("allowPaidModels");
+
+const IMAGE_MODEL_STORAGE_KEY = "poseEditorImageModel_v1";
+const INCLUDE_PAID_STORAGE_KEY = "poseEditorIncludePaidModels_v1";
 
 let pose = createDefaultPose();
 let jointRadius = 8;
@@ -35,6 +45,12 @@ let historyIndex = 0;
 
 let currentImageDataUrl = null;
 let isGeneratingImage = false;
+let allImageModels = [];
+
+const savedAllowPaid = localStorage.getItem(INCLUDE_PAID_STORAGE_KEY);
+if (allowPaidModelsInput && savedAllowPaid !== null) {
+  allowPaidModelsInput.checked = savedAllowPaid === "1";
+}
 
 const skeleton = new SkeletonCanvas(poseCanvas, pose, {
   jointRadius,
@@ -100,6 +116,7 @@ if (linkScaleInput && typeof linkScale === "number") {
 }
 
 updatePosePreview();
+initImageModelPicker();
 
 if (closeInstructionsBtn) {
   closeInstructionsBtn.addEventListener("click", () => {
@@ -264,5 +281,80 @@ async function handleGenerateImage() {
     isGeneratingImage = false;
     // Re-enable only if we still have a source image
     setGenerateButtonDisabled(!currentImageDataUrl);
+  }
+}
+
+function getAllowPaidModels() {
+  return !!(allowPaidModelsInput && allowPaidModelsInput.checked);
+}
+
+function renderImageModelOptions() {
+  if (!imageModelSelect) return;
+
+  const filtered = filterImageModelsByCapability(allImageModels, {
+    requiresImageInput: true,
+    allowPaid: getAllowPaidModels(),
+  });
+
+  const selectedBefore = imageModelSelect.value || localStorage.getItem(IMAGE_MODEL_STORAGE_KEY);
+  imageModelSelect.innerHTML = "";
+
+  if (!filtered.length) {
+    const opt = document.createElement("option");
+    opt.value = "kontext";
+    opt.textContent = "kontext (fallback)";
+    imageModelSelect.appendChild(opt);
+    imageModelSelect.value = "kontext";
+    setSelectedImageModel("kontext");
+    return;
+  }
+
+  filtered.forEach((model) => {
+    const opt = document.createElement("option");
+    opt.value = model.value;
+    opt.textContent = model.label;
+    imageModelSelect.appendChild(opt);
+  });
+
+  const selected = filtered.some((m) => m.value === selectedBefore)
+    ? selectedBefore
+    : filtered[0].value;
+
+  imageModelSelect.value = selected;
+  setSelectedImageModel(selected);
+  localStorage.setItem(IMAGE_MODEL_STORAGE_KEY, selected);
+}
+
+async function initImageModelPicker() {
+  if (!imageModelSelect) return;
+
+  imageModelSelect.innerHTML = "";
+  const loadingOption = document.createElement("option");
+  loadingOption.value = "";
+  loadingOption.textContent = "Loading models...";
+  imageModelSelect.appendChild(loadingOption);
+  imageModelSelect.disabled = true;
+
+  try {
+    allImageModels = await fetchImageModels();
+  } catch {
+    allImageModels = [];
+  }
+
+  imageModelSelect.disabled = false;
+  renderImageModelOptions();
+
+  imageModelSelect.addEventListener("change", () => {
+    const model = imageModelSelect.value || "kontext";
+    setSelectedImageModel(model);
+    localStorage.setItem(IMAGE_MODEL_STORAGE_KEY, model);
+    setAiStatus(`Image model: ${model}`);
+  });
+
+  if (allowPaidModelsInput) {
+    allowPaidModelsInput.addEventListener("change", () => {
+      localStorage.setItem(INCLUDE_PAID_STORAGE_KEY, allowPaidModelsInput.checked ? "1" : "0");
+      renderImageModelOptions();
+    });
   }
 }

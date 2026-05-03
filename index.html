@@ -41,6 +41,11 @@
 
       <div class="sidebar-section">
         <label class="field-label">Reference image</label>
+        <label class="field-label" for="imageModelSelect">Image model</label>
+        <select id="imageModelSelect" class="select-input"></select>
+        <label class="field-label checkbox-label">
+          <input id="allowPaidModels" type="checkbox" /> Include paid models
+        </label>
         <input id="imageInput" type="file" accept="image/*" />
         <button id="generateImageBtn" class="btn btn-full" disabled>Apply pose to image</button>
         <div id="aiStatus" class="field-hint"></div>
