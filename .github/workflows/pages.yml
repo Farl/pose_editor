@@ -25,6 +25,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Build runtime config
+        shell: bash
+        env:
+          AI_PROVIDER: ${{ vars.AI_PROVIDER }}
+          POLLINATIONS_API_BASE_URL: ${{ vars.POLLINATIONS_API_BASE_URL }}
+          POLLINATIONS_IMAGE_MODEL: ${{ vars.POLLINATIONS_IMAGE_MODEL }}
+          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
+        run: |
+          cat > config.runtime.js <<EOF
+          window.POSE_EDITOR_CONFIG = {
+            AI_PROVIDER: "${AI_PROVIDER:-pollinations}",
+            POLLINATIONS_API_BASE_URL: "${POLLINATIONS_API_BASE_URL:-https://gen.pollinations.ai}",
+            POLLINATIONS_API_KEY: "${POLLINATIONS_API_KEY}",
+            POLLINATIONS_IMAGE_MODEL: "${POLLINATIONS_IMAGE_MODEL:-kontext}",
+            GITHUB_TOKEN: "${GITHUB_TOKEN}",
+          };
+          EOF
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 

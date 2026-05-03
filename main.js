@@ -259,7 +259,7 @@ async function handleGenerateImage() {
     }
   } catch (e) {
     console.error(e);
-    setAiStatus("Error while generating image.");
+    setAiStatus(`AI generation failed: ${e?.message || "unknown error"}`);
   } finally {
     isGeneratingImage = false;
     // Re-enable only if we still have a source image
