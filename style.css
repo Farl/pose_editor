@@ -39,6 +39,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow-y: auto;
 }
 
 .sidebar-header {
@@ -276,9 +277,10 @@ input[type="range"] {
 }
 
 .canvas-frame {
+  --frame-padding: 2px;
   position: relative;
   border-radius: 12px;
-  padding: 2px;
+  padding: var(--frame-padding);
   background: linear-gradient(135deg, #525252, #a3a3a3);
   box-shadow: 0 0 40px rgba(0, 0, 0, 0.6);
   width: min(92vw, 92vh);
@@ -295,6 +297,25 @@ canvas {
   display: block;
   border-radius: 10px;
   background: radial-gradient(circle at center, #1a1a1a, #050505);
+  /* Pointer Events handle touch; stop the browser from scrolling/zooming. */
+  touch-action: none;
+}
+
+/* Interaction overlay stacked exactly on top of the pose canvas. It only
+   shows hints, so input passes through to the canvas underneath. */
+canvas.pose-overlay {
+  position: absolute;
+  top: var(--frame-padding);
+  left: var(--frame-padding);
+  width: calc(100% - 2 * var(--frame-padding));
+  height: calc(100% - 2 * var(--frame-padding));
+  background: none;
+  pointer-events: none;
+}
+
+.controls-hint {
+  margin-top: 6px;
+  line-height: 1.5;
 }
 
 /* Instructions pill */
@@ -317,14 +338,41 @@ canvas {
   z-index: 10;
 }
 
+/* Close button drawn as a CSS cross (two rotated bars), not a text glyph. */
 .pill-close {
+  --cross-size: 10px;
   appearance: none;
   border: none;
   background: transparent;
   color: #a1a1aa;
-  font-size: 0.8rem;
   cursor: pointer;
-  padding: 0 2px;
+  padding: 0;
+  position: relative;
+  width: var(--cross-size);
+  height: var(--cross-size);
+}
+
+.pill-close::before,
+.pill-close::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 1.5px;
+  background: currentColor;
+}
+
+.pill-close::before {
+  transform: rotate(45deg);
+}
+
+.pill-close::after {
+  transform: rotate(-45deg);
+}
+
+.pill-close:hover {
+  color: #e4e4e7;
 }
 
 .canvas-meta {

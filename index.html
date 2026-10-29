@@ -30,6 +30,24 @@
       </div>
 
       <div class="sidebar-section">
+        <label class="field-label" for="presetSelect">Preset pose</label>
+        <select id="presetSelect" class="select-input"></select>
+        <div class="btn-row">
+          <button id="copyLeftBtn" class="btn btn-secondary">Copy L to R</button>
+          <button id="copyRightBtn" class="btn btn-secondary">Copy R to L</button>
+        </div>
+        <button id="unpinAllBtn" class="btn btn-secondary btn-full" disabled>Unpin all</button>
+        <div class="field-hint controls-hint">
+          Drag a hand or foot: the arm/leg follows (IK).<br />
+          Drag the hips: move the whole body.<br />
+          Drag other joints: rotate that limb.<br />
+          Double-click/tap a hand or foot (or P): pin it.<br />
+          Alt-drag: move a single joint freely.<br />
+          Keys: Ctrl/Cmd+Z undo, Shift+Ctrl/Cmd+Z redo, M mirror, R reset.
+        </div>
+      </div>
+
+      <div class="sidebar-section">
         <label class="field-label">Joint size</label>
         <input id="jointSizeInput" type="range" min="4" max="16" step="1" value="8" />
       </div>
@@ -91,15 +109,15 @@
 
     <div class="canvas-area">
       <div id="instructions" class="instructions-pill">
-        Drag joints to change the pose
-        <button id="closeInstructions" class="pill-close">×</button>
+        Grab a hand, a foot or the hips &middot; double-click or double-tap to pin
+        <button id="closeInstructions" class="pill-close" aria-label="Close"></button>
       </div>
 
       <div class="canvas-frame">
-        <canvas id="poseCanvas" width="800" height="800"></canvas>
+        <canvas id="poseCanvas"></canvas>
       </div>
 
-      <div class="canvas-meta">Canvas: 800 × 800</div>
+      <div id="canvasMeta" class="canvas-meta"></div>
     </div>
   </div>
 
