@@ -313,6 +313,17 @@ canvas.pose-overlay {
   pointer-events: none;
 }
 
+/* Segmented toggle (drag mode): buttons share the row, the pressed one is lit. */
+.segmented .segmented-btn {
+  flex: 1;
+}
+
+.segmented .segmented-btn[aria-pressed="true"] {
+  background: #f4f4f5;
+  color: #09090b;
+  border-color: #f4f4f5;
+}
+
 .controls-hint {
   margin-top: 6px;
   line-height: 1.5;

@@ -1,6 +1,6 @@
 import { JOINT_KEYS, BONES, clonePose } from "./pose.js";
 import { applyDrag, isPinnable } from "./poseRig.js";
-import { CANVAS, PICKING, OVERLAY, FREE_MOVE_MODIFIER } from "./editorConfig.js";
+import { CANVAS, PICKING, OVERLAY, FREE_MOVE_MODIFIER, DEFAULT_DRAG_MODE } from "./editorConfig.js";
 
 const OPENPOSE_RGB = [
   [255, 0, 0],
@@ -43,13 +43,21 @@ function colorWithAlpha(color, alpha) {
 ///   - overlay   interaction hints only (hover/drag rings, pin markers), with
 ///               pointer-events disabled so input still reaches `canvas`.
 ///
-/// Gestures: drag a joint to pose; Alt-drag to move a single joint freely;
+/// Gestures: drag a joint to pose (hands/feet follow `dragMode`, IK or FK); Alt-drag to move a single joint freely;
 /// double-click / double-tap a hand or foot to pin it in place.
 export class SkeletonCanvas {
   constructor(
     canvas,
     pose,
-    { jointRadius = 8, minorAxisScale = 1, pins = [], onChange, onChangeEnd, onPinsChange } = {}
+    {
+      jointRadius = 8,
+      minorAxisScale = 1,
+      dragMode = DEFAULT_DRAG_MODE,
+      pins = [],
+      onChange,
+      onChangeEnd,
+      onPinsChange,
+    } = {}
   ) {
     this.canvas = canvas;
     this.canvas.width = this.canvas.height = CANVAS.size;
@@ -60,6 +68,7 @@ export class SkeletonCanvas {
     this.pose = pose;
     this.jointRadius = jointRadius;
     this.minorAxisScale = minorAxisScale;
+    this.dragMode = dragMode;
     this.pins = new Set(pins.filter(isPinnable));
     this.onChange = onChange;
     this.onChangeEnd = onChangeEnd;
@@ -90,6 +99,11 @@ export class SkeletonCanvas {
   setMinorAxisScale(scale) {
     this.minorAxisScale = scale;
     this.draw();
+  }
+
+  /// "ik" or "fk" (see DRAG_MODES); takes effect from the next drag.
+  setDragMode(mode) {
+    this.dragMode = mode;
   }
 
   getPins() {
@@ -165,6 +179,7 @@ export class SkeletonCanvas {
       }
       this.drag.moved = true;
       this.pose = applyDrag(this.drag.startPose, this.drag.key, point, {
+        mode: this.dragMode,
         freeMove: e[FREE_MOVE_MODIFIER],
         pins: this.pins,
       });

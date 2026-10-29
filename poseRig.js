@@ -3,15 +3,19 @@
 /// have the body follow. Pure functions over pose objects, no DOM, so they can
 /// be unit-tested in Node (see tests/poseRig.test.mjs).
 ///
-/// Drag behaviour (chosen automatically from the grabbed joint):
-///   - root (pelvis)        -> translate the whole figure
-///   - IK end (wrist/ankle) -> two-bone IK, elbow/knee keeps its bend direction
-///   - any other joint      -> FK: rotate the bone from its parent, children follow
+/// Drag behaviour (from the grabbed joint and the drag mode, see DRAG_MODES):
+///   - root (pelvis)              -> translate the whole figure
+///   - IK end (wrist/ankle), "ik" -> two-bone IK, elbow/knee keeps its bend direction
+///   - IK mid (elbow/knee), "ik"  -> pole: the hand/foot stays put and the
+///                                   elbow/knee bends toward the pointer, so a
+///                                   knee bent inward can be pulled outward
+///   - any other joint, or "fk"   -> FK: rotate the bone from its parent, children follow
 ///   - freeMove             -> move only that joint (legacy behaviour)
 /// After the drag, pinned ends are re-solved back to where they were, so
 /// "whatever you place stays put".
 
 import { JOINT_PARENT, IK_CHAINS, clonePose } from "./pose.js";
+import { DEFAULT_DRAG_MODE } from "./editorConfig.js";
 
 /// Minimum reach of a chain, as a fraction of its total length. Keeps the IK
 /// away from the fully-folded singularity.
@@ -30,6 +34,9 @@ export function getSubtree(key) {
   for (let i = 0; i < out.length; i++) out.push(...(CHILDREN[out[i]] || []));
   return out;
 }
+
+/// IK end keyed by its chain's mid joint, e.g. knee_l -> ankle_l.
+const END_OF_MID = Object.fromEntries(Object.entries(IK_CHAINS).map(([end, [, mid]]) => [mid, end]));
 
 export function isPinnable(key) {
   return key in IK_CHAINS;
@@ -82,6 +89,14 @@ function chainBendSign(joints, endKey) {
   return cross(sub(end, root), sub(joints[JOINT_PARENT[rootKey]], root)) < 0 ? 1 : -1;
 }
 
+/// Bend direction that puts the chain's mid joint on the same side as `pole`
+/// (the pointer), for a chain whose end will sit at `end` (default: where it is).
+/// Falls back to the current bend when the pointer is on the root->end line.
+function poleBendSign(joints, endKey, pole, end = joints[endKey]) {
+  const [rootKey] = IK_CHAINS[endKey];
+  return bendSign(joints[rootKey], pole, end) || chainBendSign(joints, endKey);
+}
+
 // ---- Primitive operations (mutate `joints`) -------------------------------
 
 export function rotateSubtree(joints, key, pivot, angle) {
@@ -123,9 +138,15 @@ function solveChain(joints, endKey, target, sign) {
 /// Pose that results from dragging `key` (as it was in `startPose`) to `target`.
 /// Always computed from the drag-start pose so long drags don't accumulate drift.
 ///
+/// options.mode      "ik" or "fk" (DRAG_MODES); only changes how hands/feet drag
 /// options.freeMove  move only the grabbed joint, ignoring pins
 /// options.pins      iterable of pinned IK end keys
-export function applyDrag(startPose, key, target, { freeMove = false, pins = [] } = {}) {
+export function applyDrag(
+  startPose,
+  key,
+  target,
+  { mode = DEFAULT_DRAG_MODE, freeMove = false, pins = [] } = {}
+) {
   const pose = clonePose(startPose);
   const j = pose.joints;
   const start = startPose.joints;
@@ -137,8 +158,11 @@ export function applyDrag(startPose, key, target, { freeMove = false, pins = [] 
 
   if (key === ROOT_JOINT) {
     translateSubtree(j, key, target.x - start[key].x, target.y - start[key].y);
-  } else if (IK_CHAINS[key]) {
+  } else if (mode === "ik" && IK_CHAINS[key]) {
     solveChain(j, key, target, chainBendSign(start, key));
+  } else if (mode === "ik" && END_OF_MID[key]) {
+    const endKey = END_OF_MID[key];
+    solveChain(j, endKey, start[endKey], poleBendSign(start, endKey, target));
   } else {
     const pivot = j[JOINT_PARENT[key]];
     const angle = angleOf(sub(target, pivot)) - angleOf(sub(j[key], pivot));
@@ -147,11 +171,11 @@ export function applyDrag(startPose, key, target, { freeMove = false, pins = [] 
 
   for (const pinKey of pins) {
     if (pinKey === key || !IK_CHAINS[pinKey]) continue;
-    const [rootKey, midKey] = IK_CHAINS[pinKey];
+    const [, midKey] = IK_CHAINS[pinKey];
     const pinTarget = start[pinKey];
-    // Grabbing the elbow/knee of a pinned limb picks which way it bends;
-    // otherwise keep the bend the limb had when the drag started.
-    const sign = (midKey === key && bendSign(j[rootKey], target, pinTarget)) || chainBendSign(start, pinKey);
+    // Grabbing the elbow/knee of a pinned limb picks which way it bends (in FK
+    // too); otherwise keep the bend the limb had when the drag started.
+    const sign = midKey === key ? poleBendSign(j, pinKey, target, pinTarget) : chainBendSign(start, pinKey);
     solveChain(j, pinKey, pinTarget, sign);
   }
 

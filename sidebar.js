@@ -24,6 +24,8 @@ export function initSidebar({
   onLinkScaleChange,
   onImageFileChange,
   onGenerateImageClick,
+  dragModes = [],
+  onDragModeChange,
   presets = [],
   onPresetSelect,
   onCopySide,
@@ -52,6 +54,19 @@ export function initSidebar({
     });
   }
 
+  // Drag mode: one toggle button per mode, the active one marked aria-pressed.
+  const dragModeGroup = document.getElementById("dragModeGroup");
+  const dragModeButtons = dragModes.map(({ id, label }) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-secondary segmented-btn";
+    btn.textContent = label;
+    btn.dataset.mode = id;
+    btn.addEventListener("click", () => onDragModeChange && onDragModeChange(id));
+    return btn;
+  });
+  if (dragModeGroup) dragModeGroup.append(...dragModeButtons);
+
   // Preset picker acts like a menu: choosing an entry applies it, then the
   // select returns to its placeholder so the same preset can be re-applied.
   const presetSelect = document.getElementById("presetSelect");
@@ -76,7 +91,12 @@ export function initSidebar({
     unpinAllBtn.textContent = count ? `Unpin all (${count})` : "Unpin all";
   }
 
+  function setDragMode(mode) {
+    for (const btn of dragModeButtons) btn.setAttribute("aria-pressed", String(btn.dataset.mode === mode));
+  }
+
   return {
+    setDragMode,
     setUndoRedoState,
     setPinCount,
   };

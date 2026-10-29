@@ -30,6 +30,8 @@
       </div>
 
       <div class="sidebar-section">
+        <div class="field-label" id="dragModeLabel">Drag mode</div>
+        <div id="dragModeGroup" class="btn-row segmented" role="group" aria-labelledby="dragModeLabel"></div>
         <label class="field-label" for="presetSelect">Preset pose</label>
         <select id="presetSelect" class="select-input"></select>
         <div class="btn-row">
@@ -38,12 +40,14 @@
         </div>
         <button id="unpinAllBtn" class="btn btn-secondary btn-full" disabled>Unpin all</button>
         <div class="field-hint controls-hint">
-          Drag a hand or foot: the arm/leg follows (IK).<br />
+          IK: drag a hand or foot and the arm/leg follows; drag an elbow or knee
+          to choose which way it bends (the hand/foot stays put).<br />
+          FK: drag any joint to rotate that bone; everything below follows.<br />
           Drag the hips: move the whole body.<br />
-          Drag other joints: rotate that limb.<br />
+          Drag the head, neck or shoulders: rotate them (both modes).<br />
           Double-click/tap a hand or foot (or P): pin it.<br />
           Alt-drag: move a single joint freely.<br />
-          Keys: Ctrl/Cmd+Z undo, Shift+Ctrl/Cmd+Z redo, M mirror, R reset.
+          Keys: I / F switch IK / FK, Ctrl/Cmd+Z undo, Shift+Ctrl/Cmd+Z redo, M mirror, R reset.
         </div>
       </div>
 

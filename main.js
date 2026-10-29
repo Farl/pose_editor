@@ -2,7 +2,7 @@ import { createDefaultPose, clonePose, mirrorPose, copySide } from "./pose.js";
 import { SkeletonCanvas } from "./skeletonCanvas.js";
 import { initSidebar } from "./sidebar.js";
 import { POSE_PRESETS, buildPresetPose } from "./posePresets.js";
-import { CANVAS, SHORTCUTS } from "./editorConfig.js";
+import { CANVAS, SHORTCUTS, DRAG_MODES, DEFAULT_DRAG_MODE } from "./editorConfig.js";
 import {
   fetchImageModels,
   filterImageModelsByCapability,
@@ -29,6 +29,8 @@ const INCLUDE_PAID_STORAGE_KEY = "poseEditorIncludePaidModels_v1";
 let pose = createDefaultPose();
 let jointRadius = 8;
 let linkScale = 1;
+/// How hands/feet drag: "ik" or "fk" (DRAG_MODES).
+let dragMode = DEFAULT_DRAG_MODE;
 /// Pinned IK ends (hands/feet). Editor state, not part of the pose or undo history.
 let pins = [];
 
@@ -41,6 +43,9 @@ if (savedState && savedState.pose && savedState.pose.joints) {
   }
   if (typeof savedState.linkScale === "number") {
     linkScale = savedState.linkScale;
+  }
+  if (savedState.dragMode in DRAG_MODES) {
+    dragMode = savedState.dragMode;
   }
   if (Array.isArray(savedState.pins)) {
     pins = savedState.pins;
@@ -62,6 +67,7 @@ if (allowPaidModelsInput && savedAllowPaid !== null) {
 const skeleton = new SkeletonCanvas(poseCanvas, pose, {
   jointRadius,
   minorAxisScale: linkScale,
+  dragMode,
   pins,
   onChange: (newPose) => {
     pose = newPose;
@@ -97,6 +103,8 @@ const sidebar = initSidebar({
   },
   onImageFileChange: handleImageFile,
   onGenerateImageClick: handleGenerateImage,
+  dragModes: Object.entries(DRAG_MODES).map(([id, { label }]) => ({ id, label })),
+  onDragModeChange: setDragMode,
   presets: Object.entries(POSE_PRESETS).map(([id, { label }]) => ({ id, label })),
   onPresetSelect: (id) => commitPose(buildPresetPose(id, pose)),
   onCopySide: (side) => commitPose(copySide(pose, side)),
@@ -104,6 +112,7 @@ const sidebar = initSidebar({
 });
 
 updateUndoRedoState();
+sidebar.setDragMode(dragMode);
 sidebar.setPinCount(skeleton.getPins().length);
 bindShortcuts();
 
@@ -163,6 +172,7 @@ function saveState() {
       pose,
       jointRadius,
       linkScale,
+      dragMode,
       pins,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -225,6 +235,13 @@ function handleRedo() {
   stepHistory(1);
 }
 
+function setDragMode(mode) {
+  dragMode = mode;
+  skeleton.setDragMode(mode);
+  sidebar.setDragMode(mode);
+  saveState();
+}
+
 function handleMirror() {
   commitPose(mirrorPose(pose));
 }
@@ -237,6 +254,8 @@ function bindShortcuts() {
     redo: handleRedo,
     mirror: handleMirror,
     reset: handleReset,
+    dragModeIk: () => setDragMode("ik"),
+    dragModeFk: () => setDragMode("fk"),
     togglePin: () => skeleton.togglePin(skeleton.focusJoint()),
   };
 

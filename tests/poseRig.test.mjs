@@ -76,10 +76,10 @@ test("dragging the pelvis down with pinned feet bends the knees and keeps the fe
   assert.ok(out.joints.hip_l.y > start.joints.hip_l.y);
 });
 
-test("FK: rotating the elbow swings the forearm, children follow, lengths kept", () => {
+test("FK mode: rotating the elbow swings the forearm, children follow, lengths kept", () => {
   const start = createDefaultPose();
   const { shoulder_l } = start.joints;
-  const out = applyDrag(start, "elbow_l", { x: shoulder_l.x - 100, y: shoulder_l.y });
+  const out = applyDrag(start, "elbow_l", { x: shoulder_l.x - 100, y: shoulder_l.y }, { mode: "fk" });
   near(out.joints.shoulder_l, shoulder_l);
   assert.ok(Math.abs(out.joints.elbow_l.y - shoulder_l.y) < EPS);
   assertSameLengths(start, out);
@@ -140,4 +140,64 @@ test("straight legs bend outward symmetrically when the hips drop onto pinned fe
   assert.ok(knee_l.x < start.joints.knee_l.x, "left knee goes out to the left");
   assert.ok(knee_r.x > start.joints.knee_r.x, "right knee goes out to the right");
   assert.ok(Math.abs(pelvis.x - knee_l.x - (knee_r.x - pelvis.x)) < 1e-6, "symmetric");
+});
+
+test("FK mode swings a foot around the knee and can flip the knee's bend side", () => {
+  // A bent knee: IK keeps this bend side for every drag, so it can't be undone there.
+  const start = applyDrag(createDefaultPose(), "ankle_l", { x: 330, y: 560 });
+  const { hip_l, knee_l, ankle_l } = start.joints;
+  const sideBefore = bendSign(hip_l, knee_l, ankle_l);
+  assert.notEqual(sideBefore, 0);
+
+  // Swing the shin to its mirror image across the hip->knee line.
+  const ax = knee_l.x - hip_l.x;
+  const ay = knee_l.y - hip_l.y;
+  const t = ((ankle_l.x - hip_l.x) * ax + (ankle_l.y - hip_l.y) * ay) / (ax * ax + ay * ay);
+  const foot = { x: hip_l.x + t * ax, y: hip_l.y + t * ay };
+  const target = { x: 2 * foot.x - ankle_l.x, y: 2 * foot.y - ankle_l.y };
+  const out = applyDrag(start, "ankle_l", target, { mode: "fk" });
+  assertSameLengths(start, out);
+  near(out.joints.hip_l, hip_l);
+  near(out.joints.knee_l, knee_l);
+  assert.equal(bendSign(hip_l, knee_l, out.joints.ankle_l), -sideBefore);
+
+  // Back in IK mode the new bend side is kept.
+  const ik = applyDrag(out, "ankle_l", { x: out.joints.ankle_l.x + 5, y: out.joints.ankle_l.y - 20 });
+  assert.equal(bendSign(ik.joints.hip_l, ik.joints.knee_l, ik.joints.ankle_l), -sideBefore);
+});
+
+test("FK mode still keeps pins and moves the whole body from the hips", () => {
+  const start = createDefaultPose();
+  const out = applyDrag(start, "pelvis", { x: start.joints.pelvis.x, y: start.joints.pelvis.y + 50 }, {
+    mode: "fk",
+    pins: ["ankle_l", "ankle_r"],
+  });
+  near(out.joints.ankle_l, start.joints.ankle_l);
+  near(out.joints.ankle_r, start.joints.ankle_r);
+  assertSameLengths(start, out);
+});
+
+test("IK mode: dragging a knee outward un-bends a knock-knee and keeps the foot", () => {
+  // Knock-kneed left leg: knee moved toward the pelvis (Alt free move), lengths re-solved by IK.
+  const knock = applyDrag(createDefaultPose(), "knee_l", { x: 380, y: 515 }, { freeMove: true });
+  const start = applyDrag(knock, "ankle_l", { x: knock.joints.ankle_l.x, y: knock.joints.ankle_l.y - 30 });
+  const { hip_l, ankle_l } = start.joints;
+  const inward = bendSign(hip_l, start.joints.knee_l, ankle_l);
+
+  const out = applyDrag(start, "knee_l", { x: hip_l.x - 80, y: (hip_l.y + ankle_l.y) / 2 });
+  near(out.joints.ankle_l, ankle_l);
+  near(out.joints.hip_l, hip_l);
+  assertSameLengths(start, out);
+  assert.equal(bendSign(hip_l, out.joints.knee_l, ankle_l), -inward);
+  assert.ok(out.joints.knee_l.x < hip_l.x, "knee should now point away from the body");
+});
+
+test("FK mode: dragging a knee rotates the whole leg from the hip", () => {
+  const start = createDefaultPose();
+  const { hip_l, knee_l } = start.joints;
+  const out = applyDrag(start, "knee_l", { x: hip_l.x - 100, y: hip_l.y }, { mode: "fk" });
+  near(out.joints.hip_l, hip_l);
+  assertSameLengths(start, out);
+  assert.ok(Math.abs(out.joints.knee_l.y - hip_l.y) < 1e-6, "thigh points at the pointer");
+  assert.ok(out.joints.ankle_l.x < knee_l.x - 100, "foot swings with the thigh");
 });

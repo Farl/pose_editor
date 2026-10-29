@@ -21,6 +21,19 @@ export const PICKING = {
   doubleTapMs: 350,
 };
 
+/// How dragging a hand or foot behaves. The mode is a sidebar toggle (and the
+/// shortcuts below); it is saved with the editor state.
+///   ik  hands/feet: the limb follows, elbow/knee keeps its bend side
+///       elbows/knees: pick the bend side, hand/foot stays (knees in -> out)
+///   fk  every joint rotates the bone from its parent, children follow
+/// The hips always move the whole body; head, neck and shoulders always rotate.
+export const DRAG_MODES = {
+  ik: { label: "IK" },
+  fk: { label: "FK" },
+};
+
+export const DEFAULT_DRAG_MODE = "ik";
+
 /// Holding this modifier while dragging moves only the grabbed joint (the
 /// original free-point behaviour), e.g. to change a bone's apparent length.
 export const FREE_MOVE_MODIFIER = "altKey";
@@ -47,4 +60,6 @@ export const SHORTCUTS = [
   { key: "m", mod: false, shift: false, action: "mirror" },
   { key: "p", mod: false, shift: false, action: "togglePin" },
   { key: "r", mod: false, shift: false, action: "reset" },
+  { key: "i", mod: false, shift: false, action: "dragModeIk" },
+  { key: "f", mod: false, shift: false, action: "dragModeFk" },
 ];
