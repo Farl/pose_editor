@@ -35,6 +35,22 @@ function colorWithAlpha(color, alpha) {
   return `rgba(${values}, ${alpha})`;
 }
 
+/// `order` with `keys` moved to the end (= drawn on top), each group keeping
+/// its relative order. Both are arrays of joint keys.
+function bringToFront(order, keys) {
+  const front = new Set(keys);
+  return [...order.filter((k) => !front.has(k)), ...keys];
+}
+
+/// True when `order` lists every joint exactly once (e.g. a saved draw order).
+export function isValidDrawOrder(order) {
+  return (
+    Array.isArray(order) &&
+    order.length === JOINT_KEYS.length &&
+    JOINT_KEYS.every((k) => order.includes(k))
+  );
+}
+
 /// Pose canvas with Marionette-style posing (see poseRig.js for the solver).
 ///
 /// Two stacked layers:
@@ -42,6 +58,11 @@ function colorWithAlpha(color, alpha) {
 ///               Download PNG and the AI pose guide capture.
 ///   - overlay   interaction hints only (hover/drag rings, pin markers), with
 ///               pointer-events disabled so input still reaches `canvas`.
+///
+/// Stacking: the last joint you adjust, and every joint that drag moved, are
+/// brought to the front (`drawOrder`, bottom to top). Bones follow their
+/// top-most end, so a limb you just posed across the body draws over it, and
+/// where joints overlap the pointer grabs the one on top.
 ///
 /// Gestures: drag a joint to pose (behaviour follows `dragMode`: IK, FK or Free); Alt-drag to move a single joint freely;
 /// double-click / double-tap a hand or foot to pin it in place.
@@ -53,10 +74,12 @@ export class SkeletonCanvas {
       jointRadius = 8,
       minorAxisScale = 1,
       dragMode = DEFAULT_DRAG_MODE,
+      drawOrder = JOINT_KEYS,
       pins = [],
       onChange,
       onChangeEnd,
       onPinsChange,
+      onDrawOrderChange,
     } = {}
   ) {
     this.canvas = canvas;
@@ -73,8 +96,11 @@ export class SkeletonCanvas {
     this.onChange = onChange;
     this.onChangeEnd = onChangeEnd;
     this.onPinsChange = onPinsChange;
+    this.onDrawOrderChange = onDrawOrderChange;
+    /// Joint keys bottom to top; see "Stacking" above.
+    this.drawOrder = isValidDrawOrder(drawOrder) ? [...drawOrder] : [...JOINT_KEYS];
 
-    /// Active drag: { key, pointerId, startPose, moved }, or null.
+    /// Active drag: { key, pointerId, startPose, startOrder, moved, time }, or null.
     this.drag = null;
     this.hoverJoint = null;
     /// Last joint pressed; the target of keyboard pin toggling.
@@ -104,6 +130,17 @@ export class SkeletonCanvas {
   /// "ik" or "fk" (see DRAG_MODES); takes effect from the next drag.
   setDragMode(mode) {
     this.dragMode = mode;
+  }
+
+  /// Back to the default stacking (JOINT_KEYS order).
+  resetDrawOrder() {
+    this._setDrawOrder([...JOINT_KEYS]);
+    this.draw();
+  }
+
+  _setDrawOrder(order) {
+    this.drawOrder = order;
+    if (this.onDrawOrderChange) this.onDrawOrderChange([...order]);
   }
 
   getPins() {
@@ -165,6 +202,7 @@ export class SkeletonCanvas {
         key: hit,
         pointerId: e.pointerId,
         startPose: clonePose(this.pose),
+        startOrder: this.drawOrder,
         moved: false,
         time: e.timeStamp,
       };
@@ -183,6 +221,7 @@ export class SkeletonCanvas {
         freeMove: e[FREE_MOVE_MODIFIER],
         pins: this.pins,
       });
+      this.drawOrder = this._dragOrder();
       if (this.onChange) this.onChange(this.pose);
       this.draw();
     });
@@ -191,6 +230,7 @@ export class SkeletonCanvas {
       if (!this.drag || e.pointerId !== this.drag.pointerId) return;
       const { key, moved, time } = this.drag;
       this.drag = null;
+      if (moved) this._setDrawOrder(this.drawOrder);
       this.lastTap = moved ? null : { key, time };
       // Redraw so the drag highlight doesn't linger after release.
       this.drawOverlay();
@@ -199,6 +239,18 @@ export class SkeletonCanvas {
     canvas.addEventListener("pointerup", endDrag);
     canvas.addEventListener("pointercancel", endDrag);
     canvas.addEventListener("pointerleave", () => this._setHover(null));
+  }
+
+  /// Drag-start order with the joints this drag moved brought to the front,
+  /// the grabbed joint top-most.
+  _dragOrder() {
+    const { key, startPose, startOrder } = this.drag;
+    const moved = startOrder.filter((k) => {
+      const a = startPose.joints[k];
+      const b = this.pose.joints[k];
+      return k !== key && a && b && (a.x !== b.x || a.y !== b.y);
+    });
+    return bringToFront(startOrder, [...moved, key]);
   }
 
   /// Second tap (press without drag) on the same pinnable joint in quick succession.
@@ -227,17 +279,20 @@ export class SkeletonCanvas {
     return { x: (e.clientX - rect.left) * scale, y: (e.clientY - rect.top) * scale };
   }
 
-  /// Nearest joint within the pick radius for this pointer type, or null.
+  /// Joint to grab at `point`: if the pointer is over joint dots, the top-most
+  /// one (as drawn); otherwise the nearest within the pick radius, or null.
   _hitTest(point, pointerType) {
     const radiusPx = PICKING.radiusPx[pointerType] ?? PICKING.radiusPx.mouse;
     const radius = Math.max(radiusPx * this._canvasScale(), this.jointRadius);
     let best = null;
     let bestDist = radius;
-    for (const key of JOINT_KEYS) {
+    for (let i = this.drawOrder.length - 1; i >= 0; i--) {
+      const key = this.drawOrder[i];
       const j = this.pose.joints[key];
       if (!j) continue;
       const d = Math.hypot(j.x - point.x, j.y - point.y);
-      if (d <= bestDist) {
+      if (d <= this.jointRadius) return key;
+      if (d < bestDist) {
         best = key;
         bestDist = d;
       }
@@ -270,58 +325,66 @@ export class SkeletonCanvas {
     }
     ctx.restore();
 
-    // bones as thick ovals between joints
+    // Bones and joints, bottom to top in drawOrder. Each bone is drawn in the
+    // layer of its top-most end, followed by its end dots so joints stay on
+    // top of the bones they connect.
+    const rank = Object.fromEntries(this.drawOrder.map((k, i) => [k, i]));
+    const bonesByTop = {};
+    for (const bone of BONES) {
+      const top = rank[bone[0]] > rank[bone[1]] ? bone[0] : bone[1];
+      (bonesByTop[top] ||= []).push(bone);
+    }
+    for (const key of this.drawOrder) {
+      const bones = bonesByTop[key] || [];
+      for (const bone of bones) this._drawBone(ctx, bone);
+      for (const [a, b] of bones) this._drawJoint(ctx, a === key ? b : a);
+      this._drawJoint(ctx, key);
+    }
+
+    this.drawOverlay();
+  }
+
+  /// One bone as a thick oval between its joints, coloured by its first joint.
+  _drawBone(ctx, [a, b]) {
+    const ja = this.pose.joints[a];
+    const jb = this.pose.joints[b];
+    if (!ja || !jb) return;
+
+    const dx = jb.x - ja.x;
+    const dy = jb.y - ja.y;
+    const major = Math.max(Math.hypot(dx, dy), this.jointRadius * 2);
+    const minor = Math.max(this.jointRadius * this.minorAxisScale, 2);
+    const baseColor = JOINT_COLOR_BY_KEY[a] || "rgb(255, 85, 0)";
+
     ctx.save();
     ctx.strokeStyle = "#020617";
     ctx.lineWidth = 2;
     ctx.shadowColor = "rgba(0,0,0,0.5)";
     ctx.shadowBlur = 8;
-
-    for (const [a, b] of BONES) {
-      const ja = this.pose.joints[a];
-      const jb = this.pose.joints[b];
-      if (!ja || !jb) continue;
-
-      const midX = (ja.x + jb.x) / 2;
-      const midY = (ja.y + jb.y) / 2;
-      const dx = jb.x - ja.x;
-      const dy = jb.y - ja.y;
-      const length = Math.hypot(dx, dy);
-      const angle = Math.atan2(dy, dx);
-      const major = Math.max(length, this.jointRadius * 2);
-      const minor = Math.max(this.jointRadius * this.minorAxisScale, 2);
-      const baseColor = JOINT_COLOR_BY_KEY[a] || "rgb(255, 85, 0)";
-
-      ctx.save();
-      ctx.fillStyle = colorWithAlpha(baseColor, 0.8);
-      ctx.translate(midX, midY);
-      ctx.rotate(angle);
-      ctx.beginPath();
-      ctx.ellipse(0, 0, major / 2, minor / 2, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.restore();
-    }
+    ctx.fillStyle = colorWithAlpha(baseColor, 0.8);
+    ctx.translate((ja.x + jb.x) / 2, (ja.y + jb.y) / 2);
+    ctx.rotate(Math.atan2(dy, dx));
+    ctx.beginPath();
+    ctx.ellipse(0, 0, major / 2, minor / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
     ctx.restore();
+  }
 
-    // joints
+  _drawJoint(ctx, key) {
+    const j = this.pose.joints[key];
+    if (!j) return;
     ctx.save();
-    for (const key of JOINT_KEYS) {
-      const j = this.pose.joints[key];
-      if (!j) continue;
-      ctx.beginPath();
-      ctx.arc(j.x, j.y, this.jointRadius, 0, Math.PI * 2);
-      ctx.fillStyle = JOINT_COLOR_BY_KEY[key] || "rgb(255, 85, 0)";
-      ctx.strokeStyle = "#020617";
-      ctx.lineWidth = 2;
-      ctx.shadowColor = "rgba(0,0,0,0.6)";
-      ctx.shadowBlur = 6;
-      ctx.fill();
-      ctx.stroke();
-    }
+    ctx.beginPath();
+    ctx.arc(j.x, j.y, this.jointRadius, 0, Math.PI * 2);
+    ctx.fillStyle = JOINT_COLOR_BY_KEY[key] || "rgb(255, 85, 0)";
+    ctx.strokeStyle = "#020617";
+    ctx.lineWidth = 2;
+    ctx.shadowColor = "rgba(0,0,0,0.6)";
+    ctx.shadowBlur = 6;
+    ctx.fill();
+    ctx.stroke();
     ctx.restore();
-
-    this.drawOverlay();
   }
 
   drawOverlay() {

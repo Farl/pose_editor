@@ -1,5 +1,5 @@
 import { createDefaultPose, clonePose, mirrorPose, copySide } from "./pose.js";
-import { SkeletonCanvas } from "./skeletonCanvas.js";
+import { SkeletonCanvas, isValidDrawOrder } from "./skeletonCanvas.js";
 import { initSidebar } from "./sidebar.js";
 import { POSE_PRESETS, buildPresetPose } from "./posePresets.js";
 import { CANVAS, SHORTCUTS, DRAG_MODES, DEFAULT_DRAG_MODE } from "./editorConfig.js";
@@ -31,6 +31,8 @@ let jointRadius = 8;
 let linkScale = 1;
 /// How joints drag: "ik", "fk" or "free" (DRAG_MODES).
 let dragMode = DEFAULT_DRAG_MODE;
+/// Joint stacking, bottom to top (see SkeletonCanvas); null = default order.
+let drawOrder = null;
 /// Pinned IK ends (hands/feet). Editor state, not part of the pose or undo history.
 let pins = [];
 
@@ -46,6 +48,9 @@ if (savedState && savedState.pose && savedState.pose.joints) {
   }
   if (savedState.dragMode in DRAG_MODES) {
     dragMode = savedState.dragMode;
+  }
+  if (isValidDrawOrder(savedState.drawOrder)) {
+    drawOrder = savedState.drawOrder;
   }
   if (Array.isArray(savedState.pins)) {
     pins = savedState.pins;
@@ -68,6 +73,7 @@ const skeleton = new SkeletonCanvas(poseCanvas, pose, {
   jointRadius,
   minorAxisScale: linkScale,
   dragMode,
+  drawOrder: drawOrder || undefined,
   pins,
   onChange: (newPose) => {
     pose = newPose;
@@ -77,6 +83,10 @@ const skeleton = new SkeletonCanvas(poseCanvas, pose, {
     pushHistory(finalPose);
     saveState();
     updatePosePreview();
+  },
+  onDrawOrderChange: (newOrder) => {
+    drawOrder = newOrder;
+    saveState();
   },
   onPinsChange: (newPins) => {
     pins = newPins;
@@ -173,6 +183,7 @@ function saveState() {
       jointRadius,
       linkScale,
       dragMode,
+      drawOrder,
       pins,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -215,7 +226,9 @@ function commitPose(newPose) {
 }
 
 /// Reset is undoable like any other edit, so the R shortcut is safe to hit.
+/// It also restores the default joint stacking (not part of undo history).
 function handleReset() {
+  skeleton.resetDrawOrder();
   commitPose(createDefaultPose());
 }
 
