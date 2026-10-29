@@ -29,7 +29,7 @@ const INCLUDE_PAID_STORAGE_KEY = "poseEditorIncludePaidModels_v1";
 let pose = createDefaultPose();
 let jointRadius = 8;
 let linkScale = 1;
-/// How hands/feet drag: "ik" or "fk" (DRAG_MODES).
+/// How joints drag: "ik", "fk" or "free" (DRAG_MODES).
 let dragMode = DEFAULT_DRAG_MODE;
 /// Pinned IK ends (hands/feet). Editor state, not part of the pose or undo history.
 let pins = [];
@@ -254,8 +254,7 @@ function bindShortcuts() {
     redo: handleRedo,
     mirror: handleMirror,
     reset: handleReset,
-    dragModeIk: () => setDragMode("ik"),
-    dragModeFk: () => setDragMode("fk"),
+    dragMode: setDragMode,
     togglePin: () => skeleton.togglePin(skeleton.focusJoint()),
   };
 
@@ -268,7 +267,7 @@ function bindShortcuts() {
     );
     if (!shortcut || !actions[shortcut.action]) return;
     e.preventDefault();
-    actions[shortcut.action]();
+    actions[shortcut.action](shortcut.arg);
   });
 }
 

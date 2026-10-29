@@ -201,3 +201,16 @@ test("FK mode: dragging a knee rotates the whole leg from the hip", () => {
   assert.ok(Math.abs(out.joints.knee_l.y - hip_l.y) < 1e-6, "thigh points at the pointer");
   assert.ok(out.joints.ankle_l.x < knee_l.x - 100, "foot swings with the thigh");
 });
+
+test("Free mode moves only the grabbed joint, and IK then keeps the new lengths", () => {
+  const start = createDefaultPose();
+  const target = { x: start.joints.elbow_l.x + 30, y: start.joints.elbow_l.y - 20 };
+  const out = applyDrag(start, "elbow_l", target, { mode: "free", pins: ["wrist_l"] });
+  near(out.joints.elbow_l, target);
+  for (const k of JOINT_KEYS) if (k !== "elbow_l") near(out.joints[k], start.joints[k]);
+
+  // A foreshortened forearm stays foreshortened when the hand is then IK-dragged.
+  const forearm = dist(out.joints.elbow_l, out.joints.wrist_l);
+  const ik = applyDrag(out, "wrist_l", { x: out.joints.wrist_l.x + 10, y: out.joints.wrist_l.y + 10 });
+  assert.ok(Math.abs(dist(ik.joints.elbow_l, ik.joints.wrist_l) - forearm) < 1e-6);
+});

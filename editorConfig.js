@@ -21,21 +21,24 @@ export const PICKING = {
   doubleTapMs: 350,
 };
 
-/// How dragging a hand or foot behaves. The mode is a sidebar toggle (and the
-/// shortcuts below); it is saved with the editor state.
-///   ik  hands/feet: the limb follows, elbow/knee keeps its bend side
-///       elbows/knees: pick the bend side, hand/foot stays (knees in -> out)
-///   fk  every joint rotates the bone from its parent, children follow
-/// The hips always move the whole body; head, neck and shoulders always rotate.
+/// How dragging a joint behaves. The mode is a sidebar toggle plus a one-key
+/// shortcut (`key`, added to SHORTCUTS below); it is saved with the editor state.
+///   ik    hands/feet: the limb follows, elbow/knee keeps its bend side
+///         elbows/knees: pick the bend side, hand/foot stays (knees in -> out)
+///   fk    every joint rotates the bone from its parent, children follow
+///   free  only the grabbed joint moves; bone lengths may change, which is how
+///         foreshortening (perspective) is drawn
+/// In ik/fk the hips move the whole body and head, neck and shoulders rotate.
 export const DRAG_MODES = {
-  ik: { label: "IK" },
-  fk: { label: "FK" },
+  ik: { label: "IK", key: "i" },
+  fk: { label: "FK", key: "f" },
+  free: { label: "Free", key: "g" },
 };
 
 export const DEFAULT_DRAG_MODE = "ik";
 
-/// Holding this modifier while dragging moves only the grabbed joint (the
-/// original free-point behaviour), e.g. to change a bone's apparent length.
+/// Holding this modifier while dragging is a temporary "free" mode drag, so a
+/// quick foreshortening tweak doesn't need a mode switch.
 export const FREE_MOVE_MODIFIER = "altKey";
 
 /// Interaction overlay (hover / drag / pin markers). Drawn on a separate layer
@@ -52,7 +55,7 @@ export const OVERLAY = {
 };
 
 /// Keyboard shortcuts. `mod` means Ctrl on Windows/Linux and Cmd on macOS.
-/// `action` names map to handlers in main.js.
+/// `action` names map to handlers in main.js; `arg` is passed to the handler.
 export const SHORTCUTS = [
   { key: "z", mod: true, shift: false, action: "undo" },
   { key: "z", mod: true, shift: true, action: "redo" },
@@ -60,6 +63,11 @@ export const SHORTCUTS = [
   { key: "m", mod: false, shift: false, action: "mirror" },
   { key: "p", mod: false, shift: false, action: "togglePin" },
   { key: "r", mod: false, shift: false, action: "reset" },
-  { key: "i", mod: false, shift: false, action: "dragModeIk" },
-  { key: "f", mod: false, shift: false, action: "dragModeFk" },
+  ...Object.entries(DRAG_MODES).map(([id, { key }]) => ({
+    key,
+    mod: false,
+    shift: false,
+    action: "dragMode",
+    arg: id,
+  })),
 ];

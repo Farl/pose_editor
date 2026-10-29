@@ -43,7 +43,7 @@ function colorWithAlpha(color, alpha) {
 ///   - overlay   interaction hints only (hover/drag rings, pin markers), with
 ///               pointer-events disabled so input still reaches `canvas`.
 ///
-/// Gestures: drag a joint to pose (hands/feet follow `dragMode`, IK or FK); Alt-drag to move a single joint freely;
+/// Gestures: drag a joint to pose (behaviour follows `dragMode`: IK, FK or Free); Alt-drag to move a single joint freely;
 /// double-click / double-tap a hand or foot to pin it in place.
 export class SkeletonCanvas {
   constructor(

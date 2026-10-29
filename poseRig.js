@@ -10,7 +10,7 @@
 ///                                   elbow/knee bends toward the pointer, so a
 ///                                   knee bent inward can be pulled outward
 ///   - any other joint, or "fk"   -> FK: rotate the bone from its parent, children follow
-///   - freeMove             -> move only that joint (legacy behaviour)
+///   - "free" mode / freeMove     -> move only that joint (bones may stretch)
 /// After the drag, pinned ends are re-solved back to where they were, so
 /// "whatever you place stays put".
 
@@ -138,8 +138,8 @@ function solveChain(joints, endKey, target, sign) {
 /// Pose that results from dragging `key` (as it was in `startPose`) to `target`.
 /// Always computed from the drag-start pose so long drags don't accumulate drift.
 ///
-/// options.mode      "ik" or "fk" (DRAG_MODES); only changes how hands/feet drag
-/// options.freeMove  move only the grabbed joint, ignoring pins
+/// options.mode      "ik", "fk" or "free" (DRAG_MODES)
+/// options.freeMove  force a "free" drag (the Alt modifier); ignores pins
 /// options.pins      iterable of pinned IK end keys
 export function applyDrag(
   startPose,
@@ -151,7 +151,7 @@ export function applyDrag(
   const j = pose.joints;
   const start = startPose.joints;
 
-  if (freeMove) {
+  if (freeMove || mode === "free") {
     j[key] = { x: target.x, y: target.y };
     return pose;
   }
