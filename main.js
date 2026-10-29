@@ -1,6 +1,8 @@
-import { createDefaultPose, clonePose, mirrorPose } from "./pose.js";
-import { SkeletonCanvas } from "./skeletonCanvas.js";
+import { createDefaultPose, clonePose, mirrorPose, copySide } from "./pose.js";
+import { SkeletonCanvas, isValidDrawOrder } from "./skeletonCanvas.js";
 import { initSidebar } from "./sidebar.js";
+import { POSE_PRESETS, buildPresetPose } from "./posePresets.js";
+import { CANVAS, SHORTCUTS, DRAG_MODES, DEFAULT_DRAG_MODE } from "./editorConfig.js";
 import {
   fetchImageModels,
   filterImageModelsByCapability,
@@ -27,6 +29,12 @@ const INCLUDE_PAID_STORAGE_KEY = "poseEditorIncludePaidModels_v1";
 let pose = createDefaultPose();
 let jointRadius = 8;
 let linkScale = 1;
+/// How joints drag: "ik", "fk" or "free" (DRAG_MODES).
+let dragMode = DEFAULT_DRAG_MODE;
+/// Joint stacking, bottom to top (see SkeletonCanvas); null = default order.
+let drawOrder = null;
+/// Pinned IK ends (hands/feet). Editor state, not part of the pose or undo history.
+let pins = [];
 
 // Load saved state from localStorage, if any
 const savedState = loadState();
@@ -37,6 +45,15 @@ if (savedState && savedState.pose && savedState.pose.joints) {
   }
   if (typeof savedState.linkScale === "number") {
     linkScale = savedState.linkScale;
+  }
+  if (savedState.dragMode in DRAG_MODES) {
+    dragMode = savedState.dragMode;
+  }
+  if (isValidDrawOrder(savedState.drawOrder)) {
+    drawOrder = savedState.drawOrder;
+  }
+  if (Array.isArray(savedState.pins)) {
+    pins = savedState.pins;
   }
 }
 
@@ -55,13 +72,26 @@ if (allowPaidModelsInput && savedAllowPaid !== null) {
 const skeleton = new SkeletonCanvas(poseCanvas, pose, {
   jointRadius,
   minorAxisScale: linkScale,
+  dragMode,
+  drawOrder: drawOrder || undefined,
+  pins,
   onChange: (newPose) => {
     pose = newPose;
   },
   onChangeEnd: (finalPose) => {
+    pose = finalPose;
     pushHistory(finalPose);
     saveState();
     updatePosePreview();
+  },
+  onDrawOrderChange: (newOrder) => {
+    drawOrder = newOrder;
+    saveState();
+  },
+  onPinsChange: (newPins) => {
+    pins = newPins;
+    sidebar.setPinCount(pins.length);
+    saveState();
   },
 });
 
@@ -83,9 +113,21 @@ const sidebar = initSidebar({
   },
   onImageFileChange: handleImageFile,
   onGenerateImageClick: handleGenerateImage,
+  dragModes: Object.entries(DRAG_MODES).map(([id, { label }]) => ({ id, label })),
+  onDragModeChange: setDragMode,
+  presets: Object.entries(POSE_PRESETS).map(([id, { label }]) => ({ id, label })),
+  onPresetSelect: (id) => commitPose(buildPresetPose(id, pose)),
+  onCopySide: (side) => commitPose(copySide(pose, side)),
+  onUnpinAll: () => skeleton.clearPins(),
 });
 
-sidebar.setUndoRedoState(historyIndex > 0, historyIndex < history.length - 1);
+updateUndoRedoState();
+sidebar.setDragMode(dragMode);
+sidebar.setPinCount(skeleton.getPins().length);
+bindShortcuts();
+
+const canvasMetaEl = document.getElementById("canvasMeta");
+if (canvasMetaEl) canvasMetaEl.textContent = `Canvas: ${CANVAS.size} x ${CANVAS.size}`;
 
 // Allow pasting an image from the clipboard as the reference image
 window.addEventListener("paste", (event) => {
@@ -140,6 +182,9 @@ function saveState() {
       pose,
       jointRadius,
       linkScale,
+      dragMode,
+      drawOrder,
+      pins,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
@@ -154,50 +199,89 @@ function updatePosePreview() {
   posePreviewEl.style.display = "block";
 }
 
+function updateUndoRedoState() {
+  sidebar.setUndoRedoState(historyIndex > 0, historyIndex < history.length - 1);
+}
+
 function pushHistory(newPose) {
   const snapshot = clonePose(newPose);
   history = history.slice(0, historyIndex + 1);
   history.push(snapshot);
   historyIndex = history.length - 1;
-  sidebar.setUndoRedoState(historyIndex > 0, historyIndex < history.length - 1);
+  updateUndoRedoState();
 }
 
-function handleReset() {
-  pose = createDefaultPose();
+/// Show `newPose` on the canvas and persist it, without touching history.
+function showPose(newPose) {
+  pose = newPose;
   skeleton.setPose(pose);
-  history = [clonePose(pose)];
-  historyIndex = 0;
-  sidebar.setUndoRedoState(false, false);
   saveState();
   updatePosePreview();
+}
+
+/// Apply a whole-pose edit (button, preset, shortcut) as one undoable step.
+function commitPose(newPose) {
+  showPose(newPose);
+  pushHistory(pose);
+}
+
+/// Reset is undoable like any other edit, so the R shortcut is safe to hit.
+/// It also restores the default joint stacking (not part of undo history).
+function handleReset() {
+  skeleton.resetDrawOrder();
+  commitPose(createDefaultPose());
+}
+
+function stepHistory(delta) {
+  const next = historyIndex + delta;
+  if (next < 0 || next >= history.length) return;
+  historyIndex = next;
+  showPose(clonePose(history[historyIndex]));
+  updateUndoRedoState();
 }
 
 function handleUndo() {
-  if (historyIndex <= 0) return;
-  historyIndex -= 1;
-  pose = clonePose(history[historyIndex]);
-  skeleton.setPose(pose);
-  sidebar.setUndoRedoState(historyIndex > 0, historyIndex < history.length - 1);
-  saveState();
-  updatePosePreview();
+  stepHistory(-1);
 }
 
 function handleRedo() {
-  if (historyIndex >= history.length - 1) return;
-  historyIndex += 1;
-  pose = clonePose(history[historyIndex]);
-  skeleton.setPose(pose);
-  sidebar.setUndoRedoState(historyIndex > 0, historyIndex < history.length - 1);
+  stepHistory(1);
+}
+
+function setDragMode(mode) {
+  dragMode = mode;
+  skeleton.setDragMode(mode);
+  sidebar.setDragMode(mode);
   saveState();
-  updatePosePreview();
 }
 
 function handleMirror() {
-  pose = mirrorPose(pose);
-  skeleton.setPose(pose);
-  pushHistory(pose);
-  saveState();
-  updatePosePreview();
+  commitPose(mirrorPose(pose));
+}
+
+/// Keyboard shortcuts from editorConfig.SHORTCUTS. Ignored while typing in a
+/// form field so they never steal keystrokes from inputs.
+function bindShortcuts() {
+  const actions = {
+    undo: handleUndo,
+    redo: handleRedo,
+    mirror: handleMirror,
+    reset: handleReset,
+    dragMode: setDragMode,
+    togglePin: () => skeleton.togglePin(skeleton.focusJoint()),
+  };
+
+  window.addEventListener("keydown", (e) => {
+    if (e.target.closest && e.target.closest("input, select, textarea, [contenteditable]")) return;
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+    const shortcut = SHORTCUTS.find(
+      (s) => s.key === key && s.mod === mod && s.shift === e.shiftKey && !e.altKey
+    );
+    if (!shortcut || !actions[shortcut.action]) return;
+    e.preventDefault();
+    actions[shortcut.action](shortcut.arg);
+  });
 }
 
 function handleDownload() {
