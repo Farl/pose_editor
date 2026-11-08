@@ -2,7 +2,7 @@ import { createDefaultPose, clonePose, mirrorPose, copySide } from "./pose.js";
 import { SkeletonCanvas, isValidDrawOrder } from "./skeletonCanvas.js";
 import { initSidebar } from "./sidebar.js";
 import { POSE_PRESETS, buildPresetPose } from "./posePresets.js";
-import { CANVAS, SHORTCUTS, DRAG_MODES, DEFAULT_DRAG_MODE } from "./editorConfig.js";
+import { SHORTCUTS, DRAG_MODES, DEFAULT_DRAG_MODE } from "./editorConfig.js";
 import {
   fetchImageModels,
   filterImageModelsByCapability,
@@ -13,13 +13,10 @@ import {
 const STORAGE_KEY = "poseEditorState_v1";
 
 const poseCanvas = document.getElementById("poseCanvas");
-const instructionsEl = document.getElementById("instructions");
-const closeInstructionsBtn = document.getElementById("closeInstructions");
 const resultImageEl = document.getElementById("resultImage");
 const aiStatusEl = document.getElementById("aiStatus");
 const generateImageBtn = document.getElementById("generateImageBtn");
 const inputImageEl = document.getElementById("inputImagePreview");
-const posePreviewEl = document.getElementById("posePreview");
 const imageModelSelect = document.getElementById("imageModelSelect");
 const allowPaidModelsInput = document.getElementById("allowPaidModels");
 
@@ -82,7 +79,6 @@ const skeleton = new SkeletonCanvas(poseCanvas, pose, {
     pose = finalPose;
     pushHistory(finalPose);
     saveState();
-    updatePosePreview();
   },
   onDrawOrderChange: (newOrder) => {
     drawOrder = newOrder;
@@ -113,7 +109,7 @@ const sidebar = initSidebar({
   },
   onImageFileChange: handleImageFile,
   onGenerateImageClick: handleGenerateImage,
-  dragModes: Object.entries(DRAG_MODES).map(([id, { label }]) => ({ id, label })),
+  dragModes: Object.entries(DRAG_MODES).map(([id, { label, title }]) => ({ id, label, title })),
   onDragModeChange: setDragMode,
   presets: Object.entries(POSE_PRESETS).map(([id, { label }]) => ({ id, label })),
   onPresetSelect: (id) => commitPose(buildPresetPose(id, pose)),
@@ -125,9 +121,6 @@ updateUndoRedoState();
 sidebar.setDragMode(dragMode);
 sidebar.setPinCount(skeleton.getPins().length);
 bindShortcuts();
-
-const canvasMetaEl = document.getElementById("canvasMeta");
-if (canvasMetaEl) canvasMetaEl.textContent = `Canvas: ${CANVAS.size} x ${CANVAS.size}`;
 
 // Allow pasting an image from the clipboard as the reference image
 window.addEventListener("paste", (event) => {
@@ -148,23 +141,9 @@ window.addEventListener("paste", (event) => {
 });
 
 // Sync sliders with loaded state
-const jointSizeInput = document.getElementById("jointSizeInput");
-if (jointSizeInput && typeof jointRadius === "number") {
-  jointSizeInput.value = String(jointRadius);
-}
-const linkScaleInput = document.getElementById("linkScaleInput");
-if (linkScaleInput && typeof linkScale === "number") {
-  linkScaleInput.value = String(linkScale);
-}
-
-updatePosePreview();
+sidebar.setRangeValue("jointSizeInput", jointRadius);
+sidebar.setRangeValue("linkScaleInput", linkScale);
 initImageModelPicker();
-
-if (closeInstructionsBtn) {
-  closeInstructionsBtn.addEventListener("click", () => {
-    if (instructionsEl) instructionsEl.style.display = "none";
-  });
-}
 
 function loadState() {
   try {
@@ -192,13 +171,6 @@ function saveState() {
   }
 }
 
-function updatePosePreview() {
-  if (!poseCanvas || !posePreviewEl) return;
-  const dataUrl = poseCanvas.toDataURL("image/png");
-  posePreviewEl.src = dataUrl;
-  posePreviewEl.style.display = "block";
-}
-
 function updateUndoRedoState() {
   sidebar.setUndoRedoState(historyIndex > 0, historyIndex < history.length - 1);
 }
@@ -216,7 +188,6 @@ function showPose(newPose) {
   pose = newPose;
   skeleton.setPose(pose);
   saveState();
-  updatePosePreview();
 }
 
 /// Apply a whole-pose edit (button, preset, shortcut) as one undoable step.
@@ -317,22 +288,22 @@ function handleImageFile(file) {
       currentImageDataUrl = result;
       if (inputImageEl) {
         inputImageEl.src = result;
-        inputImageEl.style.display = "block";
+        inputImageEl.hidden = false;
       }
       if (resultImageEl) {
-        resultImageEl.style.display = "none";
+        resultImageEl.hidden = true;
         resultImageEl.src = "";
       }
-      setAiStatus("Image loaded. Tap “Apply pose to image”.");
+      setAiStatus("");
       setGenerateButtonDisabled(false);
     } else {
-      setAiStatus("Could not read image.");
+      setAiStatus("Could not read that file. Use a PNG, JPEG or WebP image.");
       setGenerateButtonDisabled(true);
     }
   };
 
   reader.onerror = () => {
-    setAiStatus("Failed to load image.");
+    setAiStatus("Could not read that file. Use a PNG, JPEG or WebP image.");
     setGenerateButtonDisabled(true);
   };
 
@@ -345,7 +316,7 @@ async function handleGenerateImage() {
   }
 
   isGeneratingImage = true;
-  setAiStatus("Transforming pose with AI… (this can take a few seconds)");
+  setAiStatus("Rendering…");
   setGenerateButtonDisabled(true);
 
   try {
@@ -353,14 +324,14 @@ async function handleGenerateImage() {
     const url = await generatePoseImage(currentImageDataUrl, pose, poseImageDataUrl);
     if (url && resultImageEl) {
       resultImageEl.src = url;
-      resultImageEl.style.display = "block";
-      setAiStatus("Done! Pose applied to image.");
+      resultImageEl.hidden = false;
+      setAiStatus("");
     } else {
-      setAiStatus("AI transform failed or is unavailable.");
+      setAiStatus("Render failed. Try another model.");
     }
   } catch (e) {
     console.error(e);
-    setAiStatus(`AI generation failed: ${e?.message || "unknown error"}`);
+    setAiStatus(`Render failed: ${e?.message || "unknown error"}. Try another model.`);
   } finally {
     isGeneratingImage = false;
     // Re-enable only if we still have a source image
@@ -432,7 +403,6 @@ async function initImageModelPicker() {
     const model = imageModelSelect.value || "kontext";
     setSelectedImageModel(model);
     localStorage.setItem(IMAGE_MODEL_STORAGE_KEY, model);
-    setAiStatus(`Image model: ${model}`);
   });
 
   if (allowPaidModelsInput) {

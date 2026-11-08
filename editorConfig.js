@@ -30,9 +30,9 @@ export const PICKING = {
 ///         foreshortening (perspective) is drawn
 /// In ik/fk the hips move the whole body and head, neck and shoulders rotate.
 export const DRAG_MODES = {
-  ik: { label: "IK", key: "i" },
-  fk: { label: "FK", key: "f" },
-  free: { label: "Free", key: "g" },
+  ik: { label: "IK", title: "Inverse kinematics", key: "i" },
+  fk: { label: "FK", title: "Forward kinematics", key: "f" },
+  free: { label: "Free", title: "Free move", key: "g" },
 };
 
 export const DEFAULT_DRAG_MODE = "ik";
@@ -56,18 +56,26 @@ export const OVERLAY = {
 
 /// Keyboard shortcuts. `mod` means Ctrl on Windows/Linux and Cmd on macOS.
 /// `action` names map to handlers in main.js; `arg` is passed to the handler.
+/// `label` names the command in tooltips and the shortcuts panel.
 export const SHORTCUTS = [
-  { key: "z", mod: true, shift: false, action: "undo" },
-  { key: "z", mod: true, shift: true, action: "redo" },
-  { key: "y", mod: true, shift: false, action: "redo" },
-  { key: "m", mod: false, shift: false, action: "mirror" },
-  { key: "p", mod: false, shift: false, action: "togglePin" },
-  { key: "r", mod: false, shift: false, action: "reset" },
-  ...Object.entries(DRAG_MODES).map(([id, { key }]) => ({
+  { key: "z", mod: true, shift: false, action: "undo", label: "Undo" },
+  { key: "z", mod: true, shift: true, action: "redo", label: "Redo" },
+  { key: "y", mod: true, shift: false, action: "redo", label: "Redo" },
+  { key: "r", mod: false, shift: false, action: "reset", label: "Reset pose" },
+  { key: "m", mod: false, shift: false, action: "mirror", label: "Mirror" },
+  { key: "p", mod: false, shift: false, action: "togglePin", label: "Pin hovered hand or foot" },
+  ...Object.entries(DRAG_MODES).map(([id, { key, title }]) => ({
     key,
     mod: false,
     shift: false,
     action: "dragMode",
     arg: id,
+    label: title,
   })),
+];
+
+/// Pointer gestures, listed in the shortcuts panel next to SHORTCUTS.
+export const GESTURES = [
+  { input: "Double-click or double-tap", label: "Pin hand or foot" },
+  { input: "Alt + drag", label: "Free move, once" },
 ];
