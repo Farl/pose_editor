@@ -9,9 +9,52 @@ export const CANVAS = {
   size: 800,
   gridStep: 40,
   gridColor: "rgba(82,82,91,0.35)",
+  /// On-screen backdrop behind the grid (exports use EXPORT_BACKGROUND).
+  background: "#101215",
 };
 
 export const CANVAS_CENTER = { x: CANVAS.size / 2, y: CANVAS.size / 2 };
+
+/// Starting values for the Display sliders (the user's choice is saved).
+export const DISPLAY_DEFAULTS = {
+  jointRadius: 6,
+  linkScale: 1,
+};
+
+/// Hands (see handPoses.js).
+export const HANDS = {
+  /// Default wrist-to-middle-knuckle length as a fraction of the forearm.
+  palmToForearm: 0.4,
+  defaultGesture: "relaxed",
+  /// Guards against a zero-length palm when re-posing a collapsed hand.
+  minPalmLength: 1,
+  /// Finger joints are drawn and picked at this fraction of the joint size.
+  pointScale: 0.5,
+  /// How much of the hand is posable on the canvas. Both keep all 21
+  /// keypoints, so OpenPose-full output always has complete hands.
+  ///   full    every finger joint
+  ///   simple  wrist, palm (middle knuckle), thumb tip and fingertips
+  ///           (the fingertip handle bends all four fingers together)
+  details: {
+    simple: { label: "Simple" },
+    full: { label: "Full" },
+  },
+  defaultDetail: "simple",
+};
+
+/// Pose rendering styles live in poseStyles.js; this picks the default.
+export const DEFAULT_POSE_STYLE = "coco18";
+
+/// Exported images (Download PNG, AI pose guide) are drawn on this colour,
+/// as OpenPose/ControlNet expect. The on-screen grid is never exported.
+export const EXPORT_BACKGROUND = "#000000";
+
+/// Colours for the side-coded style: figure's right, left and centre line.
+export const SIDE_COLORS = {
+  r: "#ef4444",
+  l: "#3b82f6",
+  c: "#22c55e",
+};
 
 /// Pointer picking. Radii are in *screen* pixels so a joint stays easy to hit
 /// whatever size the canvas is displayed at; touch gets a fingertip-sized area.
@@ -52,6 +95,10 @@ export const OVERLAY = {
   pinBoxPad: 6,
   pinNeedleLength: 10,
   pinHeadRadius: 3,
+  /// Rig joints the current style doesn't draw (e.g. the waist in OpenPose
+  /// styles) still get a hollow handle so they can be grabbed.
+  handleColor: "rgba(255,255,255,0.7)",
+  handleWidth: 1.5,
 };
 
 /// Keyboard shortcuts. `mod` means Ctrl on Windows/Linux and Cmd on macOS.

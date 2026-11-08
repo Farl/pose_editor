@@ -3,7 +3,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { applyDrag, solveTwoBoneIK, bendSign, getSubtree, ROOT_JOINT } from "../poseRig.js";
-import { createDefaultPose, copySide, mirrorPose, JOINT_KEYS, IK_CHAINS } from "../pose.js";
+import {
+  createDefaultPose,
+  normalizePose,
+  copySide,
+  mirrorPose,
+  JOINT_KEYS,
+  JOINT_PARENT,
+  IK_CHAINS,
+} from "../pose.js";
 import { buildPresetPose, POSE_PRESETS } from "../posePresets.js";
 
 const EPS = 1e-6;
@@ -23,6 +31,16 @@ function assertSameLengths(a, b) {
   const la = boneLengths(a);
   const lb = boneLengths(b);
   for (const k of Object.keys(la)) assert.ok(Math.abs(la[k] - lb[k]) < 1e-6, `bone ${k} changed length`);
+}
+
+/// Every rig bone (parent -> child) keeps its length.
+function assertSameRigLengths(a, b) {
+  for (const [k, p] of Object.entries(JOINT_PARENT)) {
+    if (!p) continue;
+    const la = dist(a.joints[k], a.joints[p]);
+    const lb = dist(b.joints[k], b.joints[p]);
+    assert.ok(Math.abs(la - lb) < 1e-6, `bone ${p}-${k} changed length`);
+  }
 }
 
 test("pelvis is the root and its subtree is the whole skeleton", () => {
@@ -88,8 +106,8 @@ test("FK mode: rotating the elbow swings the forearm, children follow, lengths k
 test("pinned hand stays put while the torso leans toward it (default arm is near full reach)", () => {
   const start = createDefaultPose();
   const { pelvis, neck } = start.joints;
-  const out = applyDrag(start, "neck", { x: neck.x - 40, y: neck.y + 10 }, { pins: ["wrist_l"] });
-  near(out.joints.wrist_l, start.joints.wrist_l);
+  const out = applyDrag(start, "neck", { x: neck.x - 40, y: neck.y + 10 }, { pins: ["wrist_r"] });
+  near(out.joints.wrist_r, start.joints.wrist_r);
   assert.notDeepEqual(out.joints.neck, neck);
   near(out.joints.pelvis, pelvis);
 });
@@ -116,12 +134,13 @@ test("mirror twice is identity", () => {
 
 test("every preset builds a full pose with the source's bone lengths, feet on the ground", () => {
   const source = createDefaultPose();
-  const groundY = Math.max(source.joints.ankle_l.y, source.joints.ankle_r.y);
+  const footY = (pose) =>
+    Math.max(...JOINT_KEYS.filter((k) => /^(ankle|heel|big_toe|small_toe)_/.test(k)).map((k) => pose.joints[k].y));
   for (const id of Object.keys(POSE_PRESETS)) {
     const out = buildPresetPose(id, source);
     for (const k of JOINT_KEYS) assert.ok(Number.isFinite(out.joints[k].x), `${id}.${k}`);
-    assertSameLengths(source, out);
-    assert.ok(Math.abs(Math.max(out.joints.ankle_l.y, out.joints.ankle_r.y) - groundY) < EPS, id);
+    assertSameRigLengths(source, out);
+    assert.ok(Math.abs(footY(out) - footY(source)) < EPS, id);
   }
 });
 
@@ -134,12 +153,13 @@ test("stand preset reproduces the default pose", () => {
 test("straight legs bend outward symmetrically when the hips drop onto pinned feet", () => {
   const start = createDefaultPose();
   const out = applyDrag(start, "pelvis", { x: start.joints.pelvis.x, y: start.joints.pelvis.y + 50 }, {
-    pins: ["ankle_l", "ankle_r"],
+    pins: ["ankle_r", "ankle_l"],
   });
-  const { knee_l, knee_r, pelvis } = out.joints;
-  assert.ok(knee_l.x < start.joints.knee_l.x, "left knee goes out to the left");
-  assert.ok(knee_r.x > start.joints.knee_r.x, "right knee goes out to the right");
-  assert.ok(Math.abs(pelvis.x - knee_l.x - (knee_r.x - pelvis.x)) < 1e-6, "symmetric");
+  const { knee_r, knee_l, pelvis } = out.joints;
+  // Front-facing figure: its right side is on the image's left.
+  assert.ok(knee_r.x < start.joints.knee_r.x, "right knee goes out to the image's left");
+  assert.ok(knee_l.x > start.joints.knee_l.x, "left knee goes out to the image's right");
+  assert.ok(Math.abs(pelvis.x - knee_r.x - (knee_l.x - pelvis.x)) < 1e-6, "symmetric");
 });
 
 test("FK mode swings a foot around the knee and can flip the knee's bend side", () => {
@@ -179,17 +199,17 @@ test("FK mode still keeps pins and moves the whole body from the hips", () => {
 
 test("IK mode: dragging a knee outward un-bends a knock-knee and keeps the foot", () => {
   // Knock-kneed left leg: knee moved toward the pelvis (Alt free move), lengths re-solved by IK.
-  const knock = applyDrag(createDefaultPose(), "knee_l", { x: 380, y: 515 }, { freeMove: true });
-  const start = applyDrag(knock, "ankle_l", { x: knock.joints.ankle_l.x, y: knock.joints.ankle_l.y - 30 });
-  const { hip_l, ankle_l } = start.joints;
-  const inward = bendSign(hip_l, start.joints.knee_l, ankle_l);
+  const knock = applyDrag(createDefaultPose(), "knee_r", { x: 380, y: 515 }, { freeMove: true });
+  const start = applyDrag(knock, "ankle_r", { x: knock.joints.ankle_r.x, y: knock.joints.ankle_r.y - 30 });
+  const { hip_r, ankle_r } = start.joints;
+  const inward = bendSign(hip_r, start.joints.knee_r, ankle_r);
 
-  const out = applyDrag(start, "knee_l", { x: hip_l.x - 80, y: (hip_l.y + ankle_l.y) / 2 });
-  near(out.joints.ankle_l, ankle_l);
-  near(out.joints.hip_l, hip_l);
+  const out = applyDrag(start, "knee_r", { x: hip_r.x - 80, y: (hip_r.y + ankle_r.y) / 2 });
+  near(out.joints.ankle_r, ankle_r);
+  near(out.joints.hip_r, hip_r);
   assertSameLengths(start, out);
-  assert.equal(bendSign(hip_l, out.joints.knee_l, ankle_l), -inward);
-  assert.ok(out.joints.knee_l.x < hip_l.x, "knee should now point away from the body");
+  assert.equal(bendSign(hip_r, out.joints.knee_r, ankle_r), -inward);
+  assert.ok(out.joints.knee_r.x < hip_r.x, "knee should now point away from the body");
 });
 
 test("FK mode: dragging a knee rotates the whole leg from the hip", () => {

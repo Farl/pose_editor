@@ -1,13 +1,24 @@
-import { createDefaultPose, clonePose, mirrorPose, copySide } from "./pose.js";
+import { createDefaultPose, normalizePose, clonePose, mirrorPose, copySide } from "./pose.js";
+import { HAND_GESTURES, applyHandGesture } from "./handPoses.js";
+import { POSE_STYLES } from "./poseStyles.js";
 import { SkeletonCanvas, isValidDrawOrder } from "./skeletonCanvas.js";
 import { initSidebar } from "./sidebar.js";
 import { POSE_PRESETS, buildPresetPose } from "./posePresets.js";
-import { SHORTCUTS, DRAG_MODES, DEFAULT_DRAG_MODE } from "./editorConfig.js";
+import {
+  SHORTCUTS,
+  DRAG_MODES,
+  DEFAULT_DRAG_MODE,
+  DEFAULT_POSE_STYLE,
+  DISPLAY_DEFAULTS,
+  HANDS,
+} from "./editorConfig.js";
 import {
   fetchImageModels,
   filterImageModelsByCapability,
   generatePoseImage,
   setSelectedImageModel,
+  setApiKey,
+  POLLINATIONS_KEY_URL,
 } from "./aiService.js";
 
 const STORAGE_KEY = "poseEditorState_v1";
@@ -22,12 +33,24 @@ const allowPaidModelsInput = document.getElementById("allowPaidModels");
 
 const IMAGE_MODEL_STORAGE_KEY = "poseEditorImageModel_v1";
 const INCLUDE_PAID_STORAGE_KEY = "poseEditorIncludePaidModels_v1";
+/// The user's own Pollinations key. Stays in this browser; sent only to Pollinations.
+const API_KEY_STORAGE_KEY = "poseEditorPollinationsKey_v1";
+
+/// Hand pose menu targets: both hands, or one (figure's sides).
+const HAND_TARGETS = [
+  { label: "Both hands", sides: ["r", "l"] },
+  { label: "Right hand", sides: ["r"] },
+  { label: "Left hand", sides: ["l"] },
+];
 
 let pose = createDefaultPose();
-let jointRadius = 8;
-let linkScale = 1;
+let jointRadius = DISPLAY_DEFAULTS.jointRadius;
+let linkScale = DISPLAY_DEFAULTS.linkScale;
 /// How joints drag: "ik", "fk" or "free" (DRAG_MODES).
 let dragMode = DEFAULT_DRAG_MODE;
+/// Rendering style (POSE_STYLES) and hand detail (HANDS.details).
+let styleId = DEFAULT_POSE_STYLE;
+let handDetail = HANDS.defaultDetail;
 /// Joint stacking, bottom to top (see SkeletonCanvas); null = default order.
 let drawOrder = null;
 /// Pinned IK ends (hands/feet). Editor state, not part of the pose or undo history.
@@ -36,7 +59,7 @@ let pins = [];
 // Load saved state from localStorage, if any
 const savedState = loadState();
 if (savedState && savedState.pose && savedState.pose.joints) {
-  pose = savedState.pose;
+  pose = normalizePose(savedState.pose);
   if (typeof savedState.jointRadius === "number") {
     jointRadius = savedState.jointRadius;
   }
@@ -45,6 +68,12 @@ if (savedState && savedState.pose && savedState.pose.joints) {
   }
   if (savedState.dragMode in DRAG_MODES) {
     dragMode = savedState.dragMode;
+  }
+  if (savedState.styleId in POSE_STYLES) {
+    styleId = savedState.styleId;
+  }
+  if (savedState.handDetail in HANDS.details) {
+    handDetail = savedState.handDetail;
   }
   if (isValidDrawOrder(savedState.drawOrder)) {
     drawOrder = savedState.drawOrder;
@@ -70,6 +99,8 @@ const skeleton = new SkeletonCanvas(poseCanvas, pose, {
   jointRadius,
   minorAxisScale: linkScale,
   dragMode,
+  styleId,
+  handDetail,
   drawOrder: drawOrder || undefined,
   pins,
   onChange: (newPose) => {
@@ -111,7 +142,35 @@ const sidebar = initSidebar({
   onGenerateImageClick: handleGenerateImage,
   dragModes: Object.entries(DRAG_MODES).map(([id, { label, title }]) => ({ id, label, title })),
   onDragModeChange: setDragMode,
-  presets: Object.entries(POSE_PRESETS).map(([id, { label }]) => ({ id, label })),
+  styles: Object.entries(POSE_STYLES).map(([value, { label }]) => ({ value, label })),
+  onStyleChange: (id) => {
+    styleId = id;
+    skeleton.setStyle(id);
+    saveState();
+  },
+  handDetails: Object.entries(HANDS.details).map(([id, { label }]) => ({ id, label })),
+  onHandDetailChange: setHandDetail,
+  handPoseGroups: HAND_TARGETS.map(({ label, sides }) => ({
+    label,
+    options: Object.entries(HAND_GESTURES).map(([id, g]) => ({ value: `${sides.join("")}:${id}`, label: g.label })),
+  })),
+  onHandPoseSelect: (value) => {
+    const [sides, gestureId] = value.split(":");
+    const next = clonePose(pose);
+    for (const side of sides) applyHandGesture(next.joints, side, gestureId);
+    commitPose(next);
+  },
+  apiKeyUrl: POLLINATIONS_KEY_URL,
+  onApiKeyChange: (key) => {
+    setApiKey(key);
+    try {
+      if (key) localStorage.setItem(API_KEY_STORAGE_KEY, key);
+      else localStorage.removeItem(API_KEY_STORAGE_KEY);
+    } catch {
+      // Private mode: the key still works for this session.
+    }
+  },
+  presets: Object.entries(POSE_PRESETS).map(([value, { label }]) => ({ value, label })),
   onPresetSelect: (id) => commitPose(buildPresetPose(id, pose)),
   onCopySide: (side) => commitPose(copySide(pose, side)),
   onUnpinAll: () => skeleton.clearPins(),
@@ -119,6 +178,9 @@ const sidebar = initSidebar({
 
 updateUndoRedoState();
 sidebar.setDragMode(dragMode);
+sidebar.setStyle(styleId);
+sidebar.setHandDetail(handDetail);
+restoreApiKey();
 sidebar.setPinCount(skeleton.getPins().length);
 bindShortcuts();
 
@@ -162,6 +224,8 @@ function saveState() {
       jointRadius,
       linkScale,
       dragMode,
+      styleId,
+      handDetail,
       drawOrder,
       pins,
     };
@@ -219,6 +283,24 @@ function handleRedo() {
   stepHistory(1);
 }
 
+function setHandDetail(detail) {
+  handDetail = detail;
+  skeleton.setHandDetail(detail);
+  sidebar.setHandDetail(detail);
+  saveState();
+}
+
+function restoreApiKey() {
+  let key = "";
+  try {
+    key = localStorage.getItem(API_KEY_STORAGE_KEY) || "";
+  } catch {
+    // Storage blocked: start empty.
+  }
+  setApiKey(key);
+  sidebar.setApiKey(key);
+}
+
 function setDragMode(mode) {
   dragMode = mode;
   skeleton.setDragMode(mode);
@@ -258,7 +340,7 @@ function bindShortcuts() {
 function handleDownload() {
   const link = document.createElement("a");
   link.download = `pose-${Date.now()}.png`;
-  link.href = poseCanvas.toDataURL("image/png");
+  link.href = skeleton.toDataURL("image/png");
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -320,7 +402,7 @@ async function handleGenerateImage() {
   setGenerateButtonDisabled(true);
 
   try {
-    const poseImageDataUrl = poseCanvas.toDataURL("image/png");
+    const poseImageDataUrl = skeleton.toDataURL("image/png");
     const url = await generatePoseImage(currentImageDataUrl, pose, poseImageDataUrl);
     if (url && resultImageEl) {
       resultImageEl.src = url;

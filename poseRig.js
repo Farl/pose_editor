@@ -9,13 +9,23 @@
 ///   - IK mid (elbow/knee), "ik"  -> pole: the hand/foot stays put and the
 ///                                   elbow/knee bends toward the pointer, so a
 ///                                   knee bent inward can be pulled outward
+///   - palm / foot member         -> the whole palm or foot turns around the wrist/ankle
+///   - simple-hand handle         -> thumb, or all four fingers, bend together
 ///   - any other joint, or "fk"   -> FK: rotate the bone from its parent, children follow
 ///   - "free" mode / freeMove     -> move only that joint (bones may stretch)
 /// After the drag, pinned ends are re-solved back to where they were, so
 /// "whatever you place stays put".
 
-import { JOINT_PARENT, IK_CHAINS, clonePose } from "./pose.js";
-import { DEFAULT_DRAG_MODE } from "./editorConfig.js";
+import {
+  JOINT_PARENT,
+  JOINT_KEYS,
+  IK_CHAINS,
+  RIGID_GROUP_OF,
+  SIMPLE_HAND_HANDLES,
+  isFingerJoint,
+  clonePose,
+} from "./pose.js";
+import { DEFAULT_DRAG_MODE, HANDS } from "./editorConfig.js";
 
 /// Minimum reach of a chain, as a fraction of its total length. Keeps the IK
 /// away from the fully-folded singularity.
@@ -40,6 +50,17 @@ const END_OF_MID = Object.fromEntries(Object.entries(IK_CHAINS).map(([end, [, mi
 
 export function isPinnable(key) {
   return key in IK_CHAINS;
+}
+
+/// Whether `key` can be grabbed at this hand detail (HANDS.details): with
+/// "simple" hands only the SIMPLE_HAND_HANDLES finger joints are offered.
+export function isGrabbable(key, handDetail = HANDS.defaultDetail) {
+  return handDetail !== "simple" || !isFingerJoint(key) || key in SIMPLE_HAND_HANDLES;
+}
+
+/// Joints grabbable at `handDetail`, in rig order.
+export function grabbableJoints(handDetail) {
+  return JOINT_KEYS.filter((k) => isGrabbable(k, handDetail));
 }
 
 // ---- 2D vector helpers ----------------------------------------------------
@@ -107,6 +128,9 @@ export function translateSubtree(joints, key, dx, dy) {
   for (const k of getSubtree(key)) joints[k] = { x: joints[k].x + dx, y: joints[k].y + dy };
 }
 
+/// Signed angle that turns `from` to `to` around `pivot`.
+const angleAround = (pivot, from, to) => angleOf(sub(to, pivot)) - angleOf(sub(from, pivot));
+
 /// Analytic two-bone IK. Keeps both bone lengths, puts the end as close to
 /// `target` as reach allows, and bends the mid joint toward `sign` (see bendSign).
 /// Returns { mid, end }.
@@ -138,14 +162,15 @@ function solveChain(joints, endKey, target, sign) {
 /// Pose that results from dragging `key` (as it was in `startPose`) to `target`.
 /// Always computed from the drag-start pose so long drags don't accumulate drift.
 ///
-/// options.mode      "ik", "fk" or "free" (DRAG_MODES)
-/// options.freeMove  force a "free" drag (the Alt modifier); ignores pins
-/// options.pins      iterable of pinned IK end keys
+/// options.mode        "ik", "fk" or "free" (DRAG_MODES)
+/// options.freeMove    force a "free" drag (the Alt modifier); ignores pins
+/// options.pins        iterable of pinned IK end keys
+/// options.handDetail  "simple" or "full" (HANDS.details)
 export function applyDrag(
   startPose,
   key,
   target,
-  { mode = DEFAULT_DRAG_MODE, freeMove = false, pins = [] } = {}
+  { mode = DEFAULT_DRAG_MODE, freeMove = false, pins = [], handDetail = HANDS.defaultDetail } = {}
 ) {
   const pose = clonePose(startPose);
   const j = pose.joints;
@@ -163,10 +188,14 @@ export function applyDrag(
   } else if (mode === "ik" && END_OF_MID[key]) {
     const endKey = END_OF_MID[key];
     solveChain(j, endKey, start[endKey], poleBendSign(start, endKey, target));
+  } else if (handDetail === "simple" && SIMPLE_HAND_HANDLES[key]) {
+    const { pivot, turns } = SIMPLE_HAND_HANDLES[key];
+    const angle = angleAround(j[pivot], j[key], target);
+    for (const [turnKey, aroundKey] of turns) rotateSubtree(j, turnKey, { ...j[aroundKey] }, angle);
   } else {
-    const pivot = j[JOINT_PARENT[key]];
-    const angle = angleOf(sub(target, pivot)) - angleOf(sub(j[key], pivot));
-    rotateSubtree(j, key, pivot, angle);
+    const pivot = { ...j[JOINT_PARENT[key]] };
+    const angle = angleAround(pivot, j[key], target);
+    for (const member of RIGID_GROUP_OF[key] || [key]) rotateSubtree(j, member, pivot, angle);
   }
 
   for (const pinKey of pins) {

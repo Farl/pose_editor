@@ -54,6 +54,7 @@
       <section class="panel-section">
         <h2 class="panel-title">Pose</h2>
         <select id="presetSelect" class="field" aria-label="Preset pose"></select>
+        <select id="handPoseSelect" class="field" aria-label="Hand pose"></select>
         <button id="mirrorBtn" class="btn" data-action="mirror">Mirror</button>
         <div class="btn-pair">
           <button id="copyLeftBtn" class="btn">Copy L to R</button>
@@ -64,14 +65,19 @@
 
       <section class="panel-section">
         <h2 class="panel-title">Display</h2>
+        <select id="styleSelect" class="field" aria-label="Style"></select>
+        <div class="field-row">
+          <span id="handDetailLabel">Hands</span>
+          <div id="handDetailGroup" class="segmented" role="group" aria-labelledby="handDetailLabel"></div>
+        </div>
         <label class="slider-row">
           <span>Joints</span>
-          <input id="jointSizeInput" type="range" min="4" max="16" step="1" value="8" />
+          <input id="jointSizeInput" type="range" min="2" max="16" step="1" />
           <output for="jointSizeInput"></output>
         </label>
         <label class="slider-row">
           <span>Links</span>
-          <input id="linkScaleInput" type="range" min="0.5" max="3" step="0.1" value="1" />
+          <input id="linkScaleInput" type="range" min="0.5" max="3" step="0.1" />
           <output for="linkScaleInput"></output>
         </label>
       </section>
@@ -83,6 +89,18 @@
           <img id="inputImagePreview" alt="Reference image" hidden />
           <span class="drop-zone-empty">Add reference image</span>
         </label>
+        <div class="key-row">
+          <input
+            id="apiKeyInput"
+            class="field"
+            type="password"
+            placeholder="Pollinations API key"
+            aria-label="Pollinations API key"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <a id="apiKeyLink" class="btn" target="_blank" rel="noopener">Get key</a>
+        </div>
         <select id="imageModelSelect" class="field" aria-label="Image model"></select>
         <label class="check-row">
           <input id="allowPaidModels" type="checkbox" /> Include paid models

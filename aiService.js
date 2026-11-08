@@ -1,12 +1,23 @@
 const API_TIMEOUT_MS = 60_000;
 
+/// Non-secret provider settings; config.runtime.js may override them. API keys
+/// never come from config: each user enters their own (setApiKey), so a
+/// deployed site never ships one.
 const DEFAULT_CONFIG = {
   AI_PROVIDER: "pollinations",
   POLLINATIONS_API_BASE_URL: "https://gen.pollinations.ai",
-  POLLINATIONS_API_KEY: "",
   POLLINATIONS_IMAGE_MODEL: "kontext",
-  GITHUB_TOKEN: "",
 };
+
+/// Where users get a Pollinations key; linked from the key field.
+export const POLLINATIONS_KEY_URL = "https://enter.pollinations.ai";
+
+/// The user's own Pollinations key, set from the UI.
+let userApiKey = "";
+
+export function setApiKey(key) {
+  userApiKey = (key || "").trim();
+}
 
 const FALLBACK_IMAGE_MODELS = [
   { value: "kontext", label: "kontext (image+edit)", paidOnly: false },
@@ -117,10 +128,6 @@ export function setSelectedImageModel(modelName) {
   window.POSE_EDITOR_CONFIG.POLLINATIONS_IMAGE_MODEL = modelName;
 }
 
-function getApiKey(config) {
-  return config.POLLINATIONS_API_KEY || config.GITHUB_TOKEN || "";
-}
-
 async function parseErrorResponse(response) {
   try {
     const data = await response.json();
@@ -170,9 +177,9 @@ async function generateWithWebsim(imageDataUrl, poseImageDataUrl) {
 }
 
 async function generateWithPollinations(imageDataUrl, poseImageDataUrl, config) {
-  const key = getApiKey(config);
+  const key = userApiKey;
   if (!key) {
-    throw new Error("AI generation is not configured. Set POLLINATIONS_API_KEY (or GITHUB_TOKEN fallback) in config.runtime.js.");
+    throw new Error("Add your Pollinations API key first");
   }
 
   const payload = {

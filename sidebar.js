@@ -51,15 +51,15 @@ function showRangeValue(el) {
   if (out) out.textContent = Number(el.value).toFixed(decimals);
 }
 
-/// Wire a range input to a numeric handler, falling back when the value is invalid.
+/// Wire a range input to a numeric handler. A range input always holds a
+/// number within its min/max, so no validation is needed.
 function bindRange(id, handler) {
   const el = document.getElementById(id);
   if (!el) return el;
-  const fallback = Number(el.defaultValue);
   showRangeValue(el);
   el.addEventListener("input", () => {
     showRangeValue(el);
-    if (handler) handler(Number(el.value) || fallback);
+    if (handler) handler(Number(el.value));
   });
   return el;
 }
@@ -79,6 +79,67 @@ function bindImageDrop(zone, onFile) {
     const file = [...(e.dataTransfer?.files || [])].find((f) => f.type.startsWith("image/"));
     if (file) onFile(file);
   });
+}
+
+/// Segmented toggle in container `groupId`: one button per {id, label, title},
+/// the active one marked aria-pressed. Returns a setter for the active id.
+/// `shortcutAction` names the SHORTCUTS action whose `arg` is the item id.
+function bindSegmented(groupId, items, onChange, shortcutAction) {
+  const group = document.getElementById(groupId);
+  const buttons = items.map(({ id, label, title }) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "segmented-btn";
+    btn.textContent = label;
+    btn.dataset.value = id;
+    if (title) nameControl(btn, title, shortcutAction && findShortcut(shortcutAction, id));
+    btn.addEventListener("click", () => onChange && onChange(id));
+    return btn;
+  });
+  if (group) group.append(...buttons);
+  return (value) => {
+    for (const btn of buttons) btn.setAttribute("aria-pressed", String(btn.dataset.value === value));
+  };
+}
+
+/// A <select> used as a menu: picking an entry calls `onSelect(value)`, then it
+/// returns to its placeholder so the same entry can be picked again.
+/// `groups` is [{ label?, options: [{ value, label }] }]; labelled groups
+/// become <optgroup>s.
+function bindMenuSelect(id, placeholder, groups, onSelect) {
+  const select = document.getElementById(id);
+  if (!select) return;
+  const first = new Option(placeholder, "");
+  first.disabled = true;
+  select.append(first);
+  for (const { label, options } of groups) {
+    const opts = options.map((o) => new Option(o.label, o.value));
+    if (label) {
+      const group = document.createElement("optgroup");
+      group.label = label;
+      group.append(...opts);
+      select.append(group);
+    } else {
+      select.append(...opts);
+    }
+  }
+  select.value = "";
+  select.addEventListener("change", () => {
+    const value = select.value;
+    select.value = "";
+    if (value && onSelect) onSelect(value);
+  });
+}
+
+/// A plain <select> holding a setting. Returns a setter for its value.
+function bindSelect(id, options, onChange) {
+  const select = document.getElementById(id);
+  if (!select) return () => {};
+  select.append(...options.map((o) => new Option(o.label, o.value)));
+  select.addEventListener("change", () => onChange && onChange(select.value));
+  return (value) => {
+    select.value = value;
+  };
 }
 
 /// Fill the shortcuts panel from SHORTCUTS and GESTURES.
@@ -109,6 +170,14 @@ export function initSidebar({
   onGenerateImageClick,
   dragModes = [],
   onDragModeChange,
+  styles = [],
+  onStyleChange,
+  handDetails = [],
+  onHandDetailChange,
+  handPoseGroups = [],
+  onHandPoseSelect,
+  apiKeyUrl,
+  onApiKeyChange,
   presets = [],
   onPresetSelect,
   onCopySide,
@@ -138,37 +207,22 @@ export function initSidebar({
 
   renderShortcutList(document.getElementById("shortcutList"));
 
-  // Drag mode: one toggle button per mode, the active one marked aria-pressed.
-  const dragModeGroup = document.getElementById("dragModeGroup");
-  const dragModeButtons = dragModes.map(({ id, label, title }) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "segmented-btn";
-    btn.textContent = label;
-    btn.dataset.mode = id;
-    nameControl(btn, title, findShortcut("dragMode", id));
-    btn.addEventListener("click", () => onDragModeChange && onDragModeChange(id));
-    return btn;
-  });
-  if (dragModeGroup) dragModeGroup.append(...dragModeButtons);
+  const setDragMode = bindSegmented("dragModeGroup", dragModes, onDragModeChange, "dragMode");
+  const setHandDetail = bindSegmented("handDetailGroup", handDetails, onHandDetailChange);
+  const setStyle = bindSelect("styleSelect", styles, onStyleChange);
+  bindMenuSelect("presetSelect", "Preset pose", [{ options: presets }], onPresetSelect);
+  bindMenuSelect("handPoseSelect", "Hand pose", handPoseGroups, onHandPoseSelect);
 
-  // Preset picker acts like a menu: choosing an entry applies it, then the
-  // select returns to its placeholder so the same preset can be re-applied.
-  const presetSelect = document.getElementById("presetSelect");
-  if (presetSelect) {
-    const placeholder = new Option("Preset pose", "");
-    placeholder.disabled = true;
-    presetSelect.append(placeholder, ...presets.map(({ id, label }) => new Option(label, id)));
-    presetSelect.value = "";
-    presetSelect.addEventListener("change", () => {
-      const id = presetSelect.value;
-      presetSelect.value = "";
-      if (id && onPresetSelect) onPresetSelect(id);
-    });
+  // API key: kept by the caller (this browser only), sent only to the provider.
+  const apiKeyInput = document.getElementById("apiKeyInput");
+  if (apiKeyInput && onApiKeyChange) {
+    apiKeyInput.addEventListener("input", () => onApiKeyChange(apiKeyInput.value));
   }
+  const apiKeyLink = document.getElementById("apiKeyLink");
+  if (apiKeyLink && apiKeyUrl) apiKeyLink.href = apiKeyUrl;
 
-  function setDragMode(mode) {
-    for (const btn of dragModeButtons) btn.setAttribute("aria-pressed", String(btn.dataset.mode === mode));
+  function setApiKey(key) {
+    if (apiKeyInput) apiKeyInput.value = key || "";
   }
 
   function setUndoRedoState(canUndo, canRedo) {
@@ -193,6 +247,9 @@ export function initSidebar({
 
   return {
     setDragMode,
+    setHandDetail,
+    setStyle,
+    setApiKey,
     setUndoRedoState,
     setPinCount,
     setRangeValue,
