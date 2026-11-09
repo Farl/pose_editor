@@ -13,7 +13,7 @@ import {
   SIDE_PAIRS,
   sideOf,
 } from "../pose.js";
-import { fingerKeys, applyHandGesture, fingerStates, HAND_GESTURES } from "../handPoses.js";
+import { fingerKeys, applyHandGesture, fingerStates, handContact, HAND_GESTURES } from "../handPoses.js";
 import { POSE_STYLES, buildRenderList, styleDrawsHands } from "../poseStyles.js";
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -169,4 +169,24 @@ test("finger keypoints are drawn by the full and left/right styles", () => {
     Object.keys(POSE_STYLES).filter(styleDrawsHands),
     ["full", "sides"]
   );
+});
+
+/// Move hand `side` (wrist and fingers) so its middle knuckle lands on `target`.
+function moveHandTo(joints, side, target) {
+  const knuckle = joints[`middle1_${side}`];
+  const dx = target.x - knuckle.x;
+  const dy = target.y - knuckle.y;
+  for (const k of [`wrist_${side}`, ...fingerKeys(side)]) joints[k] = { x: joints[k].x + dx, y: joints[k].y + dy };
+}
+
+test("hand contact: none at rest, then the body part the hand is placed on", () => {
+  const { joints } = createDefaultPose();
+  assert.equal(handContact(joints, "r"), null);
+  assert.equal(handContact(joints, "l"), null);
+  moveHandTo(joints, "r", joints.eye_r);
+  assert.deepEqual(handContact(joints, "r"), { label: "eye", anchor: "eye_r" });
+  moveHandTo(joints, "l", joints.hip_l);
+  assert.deepEqual(handContact(joints, "l"), { label: "hip", anchor: "hip_l" });
+  moveHandTo(joints, "l", { x: joints.neck.x, y: (joints.neck.y + joints.waist.y) / 2 });
+  assert.deepEqual(handContact(joints, "l"), { label: "chest", anchor: null });
 });

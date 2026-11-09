@@ -44,6 +44,10 @@ export const HANDS = {
   /// this fraction of its joint chain's length (1 = perfectly straight).
   /// Used to spell hand shapes out in the AI prompt.
   extendedStraightness: 0.85,
+  /// A hand counts as touching a body landmark when any of its keypoints is
+  /// within this fraction of the torso length (neck to pelvis) of it.
+  /// Used to spell hand contacts out in the AI prompt.
+  contactDistance: 0.15,
 };
 
 /// Pose rendering styles live in poseStyles.js; this picks the default.

@@ -1,4 +1,4 @@
-import { FINGERS, fingerStates } from "./handPoses.js";
+import { FINGERS, fingerStates, handContact } from "./handPoses.js";
 
 const API_TIMEOUT_MS = 60_000;
 
@@ -47,7 +47,7 @@ function getConfig() {
 /// hand shapes out, since image models read finger keypoints poorly.
 function getPrompt(handLines = []) {
   const handSection = handLines.length
-    ? "\n\nHAND SHAPES (read from IMAGE 1, follow exactly):\n" + handLines.map((l) => `- ${l}`).join("\n")
+    ? "\n\nHAND SHAPES AND CONTACTS (read from IMAGE 1, follow exactly):\n" + handLines.map((l) => `- ${l}`).join("\n")
     : "";
   return (
     "You are redrawing a reference image so its character takes the pose from a pose guide.\n\n" +
@@ -74,9 +74,16 @@ function getPrompt(handLines = []) {
 /// "a, b and c"
 const listWords = (words) => (words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words.at(-1)}` : words[0]);
 
-/// One line per hand saying which fingers are extended or curled. Hands are
-/// named by where they are in the image, which image models follow more
-/// reliably than the figure's own left and right.
+/// "image-left" or "image-right": where `key` sits relative to its other-side twin.
+function imageSide(joints, key) {
+  const twin = key.endsWith("_r") ? key.replace(/_r$/, "_l") : key.replace(/_l$/, "_r");
+  return joints[key].x <= joints[twin].x ? "image-left" : "image-right";
+}
+
+/// One line per hand saying which fingers are extended or curled, and what
+/// part of the body the hand touches. Hands and body parts are named by
+/// where they are in the image, which image models follow more reliably
+/// than the figure's own left and right.
 function describeHands(joints) {
   const sides = ["r", "l"].sort((a, b) => joints[`wrist_${a}`].x - joints[`wrist_${b}`].x);
   return sides.map((side, i) => {
@@ -88,7 +95,11 @@ function describeHands(joints) {
     if (!curled.length) shape = "open, all fingers extended";
     else if (!extended.length) shape = "a closed fist, all fingers curled into the palm";
     else shape = `${listWords(extended)} extended; ${listWords(curled)} curled into the palm`;
-    return `The ${where} hand: ${shape}.`;
+    const contact = handContact(joints, side);
+    const touch = contact
+      ? `; touching the ${contact.anchor ? `${imageSide(joints, contact.anchor)} ` : ""}${contact.label}`
+      : "";
+    return `The ${where} hand: ${shape}${touch}.`;
   });
 }
 

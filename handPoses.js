@@ -107,6 +107,68 @@ export function fingerStates(joints, side) {
   );
 }
 
+const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+const mid = (a, b) => lerp(a, b, 0.5);
+
+/// Point or segment [a, b] a body landmark covers, from the pose's joints.
+/// Head points the rig lacks are extrapolated from the eyes away from the nose.
+const above = (j, t) => {
+  const eyes = mid(j.eye_r, j.eye_l);
+  return lerp(j.nose, eyes, 1 + t);
+};
+
+/// Body places a hand can touch, nearest first when several are in reach.
+/// "<s>" landmarks exist per side; `anchor` is the joint whose image side
+/// names it ("the image-left eye").
+const BODY_LANDMARKS = [
+  { id: "eye_<s>", label: "eye", anchor: "eye_<s>", at: (j, s) => [j[`eye_${s}`]] },
+  { id: "face", label: "face", at: (j) => [j.nose] },
+  { id: "forehead", label: "forehead", at: (j) => [above(j, 1.5)] },
+  { id: "crown", label: "top of the head", at: (j) => [above(j, 3)] },
+  { id: "ear_<s>", label: "side of the head and hair, by the ear", anchor: "ear_<s>", at: (j, s) => [j[`ear_${s}`]] },
+  { id: "neck", label: "neck", at: (j) => [j.neck] },
+  { id: "chest", label: "chest", at: (j) => [lerp(j.neck, j.waist, 0.4)] },
+  {
+    id: "hip_<s>", label: "hip", anchor: "hip_<s>",
+    at: (j, s) => [lerp(j[`shoulder_${s}`], j[`hip_${s}`], 0.6), j[`hip_${s}`]],
+  },
+  // Starts below the hip joint so a hand on the hip reads as "hip".
+  {
+    id: "thigh_<s>", label: "thigh", anchor: "hip_<s>",
+    at: (j, s) => [lerp(j[`hip_${s}`], j[`knee_${s}`], 0.25), j[`knee_${s}`]],
+  },
+  { id: "knee_<s>", label: "knee", anchor: "knee_<s>", at: (j, s) => [j[`knee_${s}`]] },
+];
+
+function distanceToSegment(p, a, b = a) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  const t = lenSq ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq)) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/// The body landmark hand `side` touches, or null: the nearest landmark to
+/// any of the hand's 21 keypoints, if within HANDS.contactDistance. Returns
+/// { label, anchor } with `anchor` the joint that tells the landmark's image
+/// side (null for centre-line landmarks).
+export function handContact(joints, side) {
+  const torso = Math.hypot(joints.neck.x - joints.pelvis.x, joints.neck.y - joints.pelvis.y);
+  const reach = torso * HANDS.contactDistance;
+  const hand = [joints[`wrist_${side}`], ...fingerKeys(side).map((k) => joints[k])];
+  let best = null;
+  for (const lm of BODY_LANDMARKS) {
+    for (const s of lm.id.includes("<s>") ? ["r", "l"] : [null]) {
+      const segment = lm.at(joints, s);
+      const d = Math.min(...hand.map((p) => distanceToSegment(p, ...segment)));
+      if (d <= reach && (!best || d < best.d)) {
+        best = { d, label: lm.label, anchor: lm.anchor ? lm.anchor.replace("<s>", s) : null };
+      }
+    }
+  }
+  return best && { label: best.label, anchor: best.anchor };
+}
+
 /// Re-pose an existing hand, keeping its size and the way the palm points.
 export function applyHandGesture(joints, side, gestureId) {
   const wrist = joints[`wrist_${side}`];
