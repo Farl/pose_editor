@@ -40,6 +40,10 @@ export const HANDS = {
     full: { label: "Full" },
   },
   defaultDetail: "simple",
+  /// A finger counts as extended when its base-to-tip distance is at least
+  /// this fraction of its joint chain's length (1 = perfectly straight).
+  /// Used to spell hand shapes out in the AI prompt.
+  extendedStraightness: 0.85,
 };
 
 /// Pose rendering styles live in poseStyles.js; this picks the default.

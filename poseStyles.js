@@ -155,6 +155,11 @@ export const POSE_STYLES = {
   sides: { label: "Left / right", build: sides },
 };
 
+/// True when `styleId` draws finger keypoints, i.e. its exports show hand shapes.
+export function styleDrawsHands(styleId) {
+  return buildRenderList(styleId, 1, 1).points.some((p) => isFingerJoint(p.key));
+}
+
 /// Render list for `styleId` at joint size `jointRadius` and link scale `linkScale`.
 export function buildRenderList(styleId, jointRadius, linkScale) {
   const style = POSE_STYLES[styleId] || POSE_STYLES.coco18;

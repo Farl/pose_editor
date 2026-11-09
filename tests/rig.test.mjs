@@ -13,8 +13,8 @@ import {
   SIDE_PAIRS,
   sideOf,
 } from "../pose.js";
-import { fingerKeys, applyHandGesture, HAND_GESTURES } from "../handPoses.js";
-import { POSE_STYLES, buildRenderList } from "../poseStyles.js";
+import { fingerKeys, applyHandGesture, fingerStates, HAND_GESTURES } from "../handPoses.js";
+import { POSE_STYLES, buildRenderList, styleDrawsHands } from "../poseStyles.js";
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const near = (a, b, eps = 1e-6) => assert.ok(dist(a, b) < eps, `${JSON.stringify(a)} != ${JSON.stringify(b)}`);
@@ -149,4 +149,24 @@ test("COCO-18 uses the reference colours: neck red, right shoulder limb orange-i
   assert.equal(points.find((p) => p.key === "neck").color, "rgb(255, 85, 0)");
   // Limb 0 (neck - right shoulder) is colour 0 at 60 %.
   assert.equal(segments[0].color, "rgb(153, 0, 0)");
+});
+
+test("finger states read each gesture's extended and curled fingers", () => {
+  const pose = createDefaultPose();
+  const extendedFingers = (id) => {
+    applyHandGesture(pose.joints, "l", id);
+    const states = fingerStates(pose.joints, "l");
+    return Object.keys(states).filter((f) => states[f]);
+  };
+  assert.deepEqual(extendedFingers("open"), ["thumb", "index", "middle", "ring", "pinky"]);
+  assert.deepEqual(extendedFingers("fist"), []);
+  assert.deepEqual(extendedFingers("point"), ["index"]);
+  assert.deepEqual(extendedFingers("peace"), ["index", "middle"]);
+});
+
+test("finger keypoints are drawn by the full and left/right styles", () => {
+  assert.deepEqual(
+    Object.keys(POSE_STYLES).filter(styleDrawsHands),
+    ["full", "sides"]
+  );
 });

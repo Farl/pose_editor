@@ -1,3 +1,5 @@
+import { FINGERS, fingerStates } from "./handPoses.js";
+
 const API_TIMEOUT_MS = 60_000;
 
 /// Non-secret provider settings; config.runtime.js may override them. API keys
@@ -41,8 +43,12 @@ function getConfig() {
 /// IMAGE 1 owns the body and the camera: pose, viewing angle, perspective and
 /// foreshortening, so dramatic guides are not flattened back to the original
 /// eye-level view. The guide is an OpenPose skeleton (styles in poseStyles.js),
-/// optionally with finger keypoints.
-function getPrompt() {
+/// optionally with finger keypoints; `handLines` (describeHands) spell the
+/// hand shapes out, since image models read finger keypoints poorly.
+function getPrompt(handLines = []) {
+  const handSection = handLines.length
+    ? "\n\nHAND SHAPES (read from IMAGE 1, follow exactly):\n" + handLines.map((l) => `- ${l}`).join("\n")
+    : "";
   return (
     "You are redrawing a reference image so its character takes the pose from a pose guide.\n\n" +
     "IMAGE 0 (CHARACTER AND STYLE REFERENCE):\n" +
@@ -60,8 +66,30 @@ function getPrompt() {
     "- Prefer the guide's pose, camera angle and perspective over the composition of IMAGE 0, even when that makes the shot more dramatic.\n" +
     "- Keep faces, hair, clothing, colors and body proportions consistent with IMAGE 0.\n" +
     "- Do NOT draw or overlay any rigs, joints, sticks, guides, or pose markers in the final result.\n" +
-    "- The final image must look like a normal finished illustration or photo."
+    "- The final image must look like a normal finished illustration or photo." +
+    handSection
   );
+}
+
+/// "a, b and c"
+const listWords = (words) => (words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words.at(-1)}` : words[0]);
+
+/// One line per hand saying which fingers are extended or curled. Hands are
+/// named by where they are in the image, which image models follow more
+/// reliably than the figure's own left and right.
+function describeHands(joints) {
+  const sides = ["r", "l"].sort((a, b) => joints[`wrist_${a}`].x - joints[`wrist_${b}`].x);
+  return sides.map((side, i) => {
+    const states = fingerStates(joints, side);
+    const extended = FINGERS.filter((f) => states[f]);
+    const curled = FINGERS.filter((f) => !states[f]);
+    const where = i === 0 ? "image-left" : "image-right";
+    let shape;
+    if (!curled.length) shape = "open, all fingers extended";
+    else if (!extended.length) shape = "a closed fist, all fingers curled into the palm";
+    else shape = `${listWords(extended)} extended; ${listWords(curled)} curled into the palm`;
+    return `The ${where} hand: ${shape}.`;
+  });
 }
 
 function normalizeBaseUrl(url) {
@@ -167,7 +195,7 @@ async function postJson(url, options) {
   }
 }
 
-async function generateWithWebsim(imageDataUrl, poseImageDataUrl) {
+async function generateWithWebsim(imageDataUrl, poseImageDataUrl, prompt) {
   if (typeof websim === "undefined" || !websim.imageGen) {
     return null;
   }
@@ -177,14 +205,14 @@ async function generateWithWebsim(imageDataUrl, poseImageDataUrl) {
   if (poseImageDataUrl) image_inputs.push({ url: poseImageDataUrl });
 
   const result = await websim.imageGen({
-    prompt: getPrompt(),
+    prompt,
     image_inputs,
   });
 
   return result && result.url ? result.url : null;
 }
 
-async function generateWithPollinations(imageDataUrl, poseImageDataUrl, config) {
+async function generateWithPollinations(imageDataUrl, poseImageDataUrl, prompt, config) {
   const key = userApiKey;
   if (!key) {
     throw new Error("Add your Pollinations API key first");
@@ -192,7 +220,7 @@ async function generateWithPollinations(imageDataUrl, poseImageDataUrl, config) 
 
   const payload = {
     model: config.POLLINATIONS_IMAGE_MODEL || "kontext",
-    prompt: getPrompt(),
+    prompt,
     image: [imageDataUrl, poseImageDataUrl],
     size: "1024x1024",
   };
@@ -216,21 +244,24 @@ async function generateWithPollinations(imageDataUrl, poseImageDataUrl, config) 
 }
 
 /// Re-draw an uploaded image so the main figure matches the given pose.
-export async function generatePoseImage(imageDataUrl, pose, poseImageDataUrl) {
+/// `includeHands`: the guide shows finger keypoints, so the prompt also
+/// spells out each hand's shape.
+export async function generatePoseImage(imageDataUrl, pose, poseImageDataUrl, { includeHands = false } = {}) {
   const config = getConfig();
+  const prompt = getPrompt(includeHands ? describeHands(pose.joints) : []);
   const provider = config.AI_PROVIDER || "pollinations";
 
   try {
     if (provider === "websim") {
-      return await generateWithWebsim(imageDataUrl, poseImageDataUrl);
+      return await generateWithWebsim(imageDataUrl, poseImageDataUrl, prompt);
     }
 
     if (provider === "pollinations") {
-      const websimResult = await generateWithWebsim(imageDataUrl, poseImageDataUrl);
+      const websimResult = await generateWithWebsim(imageDataUrl, poseImageDataUrl, prompt);
       if (websimResult) {
         return websimResult;
       }
-      return await generateWithPollinations(imageDataUrl, poseImageDataUrl, config);
+      return await generateWithPollinations(imageDataUrl, poseImageDataUrl, prompt, config);
     }
 
     throw new Error(`Unsupported AI provider: ${provider}`);

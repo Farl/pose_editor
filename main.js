@@ -1,6 +1,6 @@
 import { createDefaultPose, normalizePose, clonePose, mirrorPose, copySide } from "./pose.js";
 import { HAND_GESTURES, applyHandGesture } from "./handPoses.js";
-import { POSE_STYLES } from "./poseStyles.js";
+import { POSE_STYLES, styleDrawsHands } from "./poseStyles.js";
 import { SkeletonCanvas, isValidDrawOrder } from "./skeletonCanvas.js";
 import { initSidebar } from "./sidebar.js";
 import { POSE_PRESETS, buildPresetPose } from "./posePresets.js";
@@ -403,7 +403,9 @@ async function handleGenerateImage() {
 
   try {
     const poseImageDataUrl = skeleton.toDataURL("image/png");
-    const url = await generatePoseImage(currentImageDataUrl, pose, poseImageDataUrl);
+    const url = await generatePoseImage(currentImageDataUrl, pose, poseImageDataUrl, {
+      includeHands: styleDrawsHands(styleId),
+    });
     if (url && resultImageEl) {
       resultImageEl.src = url;
       resultImageEl.hidden = false;

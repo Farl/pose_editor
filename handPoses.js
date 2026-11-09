@@ -92,6 +92,21 @@ export function placeHand(joints, side, gestureId, dir, palmLen) {
   });
 }
 
+/// Extended (true) or curled (false) for each finger of hand `side`, judged
+/// by how straight the finger's chain is (HANDS.extendedStraightness).
+export function fingerStates(joints, side) {
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  return Object.fromEntries(
+    FINGERS.map((f) => {
+      const points = Array.from({ length: FINGER_JOINTS }, (_, i) => joints[handKey(f, i + 1, side)]);
+      let length = 0;
+      for (let i = 1; i < points.length; i++) length += dist(points[i - 1], points[i]);
+      const straight = length ? dist(points[0], points[points.length - 1]) / length : 1;
+      return [f, straight >= HANDS.extendedStraightness];
+    })
+  );
+}
+
 /// Re-pose an existing hand, keeping its size and the way the palm points.
 export function applyHandGesture(joints, side, gestureId) {
   const wrist = joints[`wrist_${side}`];
