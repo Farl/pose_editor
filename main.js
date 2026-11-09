@@ -1,42 +1,85 @@
-import { createDefaultPose, clonePose, mirrorPose } from "./pose.js";
-import { SkeletonCanvas } from "./skeletonCanvas.js";
+import { createDefaultPose, normalizePose, clonePose, mirrorPose, copySide } from "./pose.js";
+import { HAND_GESTURES, applyHandGesture } from "./handPoses.js";
+import { POSE_STYLES, styleDrawsHands } from "./poseStyles.js";
+import { SkeletonCanvas, isValidDrawOrder } from "./skeletonCanvas.js";
 import { initSidebar } from "./sidebar.js";
+import { POSE_PRESETS, buildPresetPose } from "./posePresets.js";
+import {
+  SHORTCUTS,
+  DRAG_MODES,
+  DEFAULT_DRAG_MODE,
+  DEFAULT_POSE_STYLE,
+  DISPLAY_DEFAULTS,
+  HANDS,
+} from "./editorConfig.js";
 import {
   fetchImageModels,
   filterImageModelsByCapability,
   generatePoseImage,
   setSelectedImageModel,
+  setApiKey,
+  POLLINATIONS_KEY_URL,
 } from "./aiService.js";
 
 const STORAGE_KEY = "poseEditorState_v1";
 
 const poseCanvas = document.getElementById("poseCanvas");
-const instructionsEl = document.getElementById("instructions");
-const closeInstructionsBtn = document.getElementById("closeInstructions");
 const resultImageEl = document.getElementById("resultImage");
 const aiStatusEl = document.getElementById("aiStatus");
 const generateImageBtn = document.getElementById("generateImageBtn");
 const inputImageEl = document.getElementById("inputImagePreview");
-const posePreviewEl = document.getElementById("posePreview");
 const imageModelSelect = document.getElementById("imageModelSelect");
 const allowPaidModelsInput = document.getElementById("allowPaidModels");
 
 const IMAGE_MODEL_STORAGE_KEY = "poseEditorImageModel_v1";
 const INCLUDE_PAID_STORAGE_KEY = "poseEditorIncludePaidModels_v1";
+/// The user's own Pollinations key. Stays in this browser; sent only to Pollinations.
+const API_KEY_STORAGE_KEY = "poseEditorPollinationsKey_v1";
+
+/// Hand pose menu targets: both hands, or one (figure's sides).
+const HAND_TARGETS = [
+  { label: "Both hands", sides: ["r", "l"] },
+  { label: "Right hand", sides: ["r"] },
+  { label: "Left hand", sides: ["l"] },
+];
 
 let pose = createDefaultPose();
-let jointRadius = 8;
-let linkScale = 1;
+let jointRadius = DISPLAY_DEFAULTS.jointRadius;
+let linkScale = DISPLAY_DEFAULTS.linkScale;
+/// How joints drag: "ik", "fk" or "free" (DRAG_MODES).
+let dragMode = DEFAULT_DRAG_MODE;
+/// Rendering style (POSE_STYLES) and hand detail (HANDS.details).
+let styleId = DEFAULT_POSE_STYLE;
+let handDetail = HANDS.defaultDetail;
+/// Joint stacking, bottom to top (see SkeletonCanvas); null = default order.
+let drawOrder = null;
+/// Pinned IK ends (hands/feet). Editor state, not part of the pose or undo history.
+let pins = [];
 
 // Load saved state from localStorage, if any
 const savedState = loadState();
 if (savedState && savedState.pose && savedState.pose.joints) {
-  pose = savedState.pose;
+  pose = normalizePose(savedState.pose);
   if (typeof savedState.jointRadius === "number") {
     jointRadius = savedState.jointRadius;
   }
   if (typeof savedState.linkScale === "number") {
     linkScale = savedState.linkScale;
+  }
+  if (savedState.dragMode in DRAG_MODES) {
+    dragMode = savedState.dragMode;
+  }
+  if (savedState.styleId in POSE_STYLES) {
+    styleId = savedState.styleId;
+  }
+  if (savedState.handDetail in HANDS.details) {
+    handDetail = savedState.handDetail;
+  }
+  if (isValidDrawOrder(savedState.drawOrder)) {
+    drawOrder = savedState.drawOrder;
+  }
+  if (Array.isArray(savedState.pins)) {
+    pins = savedState.pins;
   }
 }
 
@@ -55,13 +98,27 @@ if (allowPaidModelsInput && savedAllowPaid !== null) {
 const skeleton = new SkeletonCanvas(poseCanvas, pose, {
   jointRadius,
   minorAxisScale: linkScale,
+  dragMode,
+  styleId,
+  handDetail,
+  drawOrder: drawOrder || undefined,
+  pins,
   onChange: (newPose) => {
     pose = newPose;
   },
   onChangeEnd: (finalPose) => {
+    pose = finalPose;
     pushHistory(finalPose);
     saveState();
-    updatePosePreview();
+  },
+  onDrawOrderChange: (newOrder) => {
+    drawOrder = newOrder;
+    saveState();
+  },
+  onPinsChange: (newPins) => {
+    pins = newPins;
+    sidebar.setPinCount(pins.length);
+    saveState();
   },
 });
 
@@ -83,9 +140,49 @@ const sidebar = initSidebar({
   },
   onImageFileChange: handleImageFile,
   onGenerateImageClick: handleGenerateImage,
+  dragModes: Object.entries(DRAG_MODES).map(([id, { label, title }]) => ({ id, label, title })),
+  onDragModeChange: setDragMode,
+  styles: Object.entries(POSE_STYLES).map(([value, { label }]) => ({ value, label })),
+  onStyleChange: (id) => {
+    styleId = id;
+    skeleton.setStyle(id);
+    saveState();
+  },
+  handDetails: Object.entries(HANDS.details).map(([id, { label }]) => ({ id, label })),
+  onHandDetailChange: setHandDetail,
+  handPoseGroups: HAND_TARGETS.map(({ label, sides }) => ({
+    label,
+    options: Object.entries(HAND_GESTURES).map(([id, g]) => ({ value: `${sides.join("")}:${id}`, label: g.label })),
+  })),
+  onHandPoseSelect: (value) => {
+    const [sides, gestureId] = value.split(":");
+    const next = clonePose(pose);
+    for (const side of sides) applyHandGesture(next.joints, side, gestureId);
+    commitPose(next);
+  },
+  apiKeyUrl: POLLINATIONS_KEY_URL,
+  onApiKeyChange: (key) => {
+    setApiKey(key);
+    try {
+      if (key) localStorage.setItem(API_KEY_STORAGE_KEY, key);
+      else localStorage.removeItem(API_KEY_STORAGE_KEY);
+    } catch {
+      // Private mode: the key still works for this session.
+    }
+  },
+  presets: Object.entries(POSE_PRESETS).map(([value, { label }]) => ({ value, label })),
+  onPresetSelect: (id) => commitPose(buildPresetPose(id, pose)),
+  onCopySide: (side) => commitPose(copySide(pose, side)),
+  onUnpinAll: () => skeleton.clearPins(),
 });
 
-sidebar.setUndoRedoState(historyIndex > 0, historyIndex < history.length - 1);
+updateUndoRedoState();
+sidebar.setDragMode(dragMode);
+sidebar.setStyle(styleId);
+sidebar.setHandDetail(handDetail);
+restoreApiKey();
+sidebar.setPinCount(skeleton.getPins().length);
+bindShortcuts();
 
 // Allow pasting an image from the clipboard as the reference image
 window.addEventListener("paste", (event) => {
@@ -106,23 +203,9 @@ window.addEventListener("paste", (event) => {
 });
 
 // Sync sliders with loaded state
-const jointSizeInput = document.getElementById("jointSizeInput");
-if (jointSizeInput && typeof jointRadius === "number") {
-  jointSizeInput.value = String(jointRadius);
-}
-const linkScaleInput = document.getElementById("linkScaleInput");
-if (linkScaleInput && typeof linkScale === "number") {
-  linkScaleInput.value = String(linkScale);
-}
-
-updatePosePreview();
+sidebar.setRangeValue("jointSizeInput", jointRadius);
+sidebar.setRangeValue("linkScaleInput", linkScale);
 initImageModelPicker();
-
-if (closeInstructionsBtn) {
-  closeInstructionsBtn.addEventListener("click", () => {
-    if (instructionsEl) instructionsEl.style.display = "none";
-  });
-}
 
 function loadState() {
   try {
@@ -140,6 +223,11 @@ function saveState() {
       pose,
       jointRadius,
       linkScale,
+      dragMode,
+      styleId,
+      handDetail,
+      drawOrder,
+      pins,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
@@ -147,11 +235,8 @@ function saveState() {
   }
 }
 
-function updatePosePreview() {
-  if (!poseCanvas || !posePreviewEl) return;
-  const dataUrl = poseCanvas.toDataURL("image/png");
-  posePreviewEl.src = dataUrl;
-  posePreviewEl.style.display = "block";
+function updateUndoRedoState() {
+  sidebar.setUndoRedoState(historyIndex > 0, historyIndex < history.length - 1);
 }
 
 function pushHistory(newPose) {
@@ -159,51 +244,103 @@ function pushHistory(newPose) {
   history = history.slice(0, historyIndex + 1);
   history.push(snapshot);
   historyIndex = history.length - 1;
-  sidebar.setUndoRedoState(historyIndex > 0, historyIndex < history.length - 1);
+  updateUndoRedoState();
 }
 
-function handleReset() {
-  pose = createDefaultPose();
+/// Show `newPose` on the canvas and persist it, without touching history.
+function showPose(newPose) {
+  pose = newPose;
   skeleton.setPose(pose);
-  history = [clonePose(pose)];
-  historyIndex = 0;
-  sidebar.setUndoRedoState(false, false);
   saveState();
-  updatePosePreview();
+}
+
+/// Apply a whole-pose edit (button, preset, shortcut) as one undoable step.
+function commitPose(newPose) {
+  showPose(newPose);
+  pushHistory(pose);
+}
+
+/// Reset is undoable like any other edit, so the R shortcut is safe to hit.
+/// It also restores the default joint stacking (not part of undo history).
+function handleReset() {
+  skeleton.resetDrawOrder();
+  commitPose(createDefaultPose());
+}
+
+function stepHistory(delta) {
+  const next = historyIndex + delta;
+  if (next < 0 || next >= history.length) return;
+  historyIndex = next;
+  showPose(clonePose(history[historyIndex]));
+  updateUndoRedoState();
 }
 
 function handleUndo() {
-  if (historyIndex <= 0) return;
-  historyIndex -= 1;
-  pose = clonePose(history[historyIndex]);
-  skeleton.setPose(pose);
-  sidebar.setUndoRedoState(historyIndex > 0, historyIndex < history.length - 1);
-  saveState();
-  updatePosePreview();
+  stepHistory(-1);
 }
 
 function handleRedo() {
-  if (historyIndex >= history.length - 1) return;
-  historyIndex += 1;
-  pose = clonePose(history[historyIndex]);
-  skeleton.setPose(pose);
-  sidebar.setUndoRedoState(historyIndex > 0, historyIndex < history.length - 1);
+  stepHistory(1);
+}
+
+function setHandDetail(detail) {
+  handDetail = detail;
+  skeleton.setHandDetail(detail);
+  sidebar.setHandDetail(detail);
   saveState();
-  updatePosePreview();
+}
+
+function restoreApiKey() {
+  let key = "";
+  try {
+    key = localStorage.getItem(API_KEY_STORAGE_KEY) || "";
+  } catch {
+    // Storage blocked: start empty.
+  }
+  setApiKey(key);
+  sidebar.setApiKey(key);
+}
+
+function setDragMode(mode) {
+  dragMode = mode;
+  skeleton.setDragMode(mode);
+  sidebar.setDragMode(mode);
+  saveState();
 }
 
 function handleMirror() {
-  pose = mirrorPose(pose);
-  skeleton.setPose(pose);
-  pushHistory(pose);
-  saveState();
-  updatePosePreview();
+  commitPose(mirrorPose(pose));
+}
+
+/// Keyboard shortcuts from editorConfig.SHORTCUTS. Ignored while typing in a
+/// form field so they never steal keystrokes from inputs.
+function bindShortcuts() {
+  const actions = {
+    undo: handleUndo,
+    redo: handleRedo,
+    mirror: handleMirror,
+    reset: handleReset,
+    dragMode: setDragMode,
+    togglePin: () => skeleton.togglePin(skeleton.focusJoint()),
+  };
+
+  window.addEventListener("keydown", (e) => {
+    if (e.target.closest && e.target.closest("input, select, textarea, [contenteditable]")) return;
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+    const shortcut = SHORTCUTS.find(
+      (s) => s.key === key && s.mod === mod && s.shift === e.shiftKey && !e.altKey
+    );
+    if (!shortcut || !actions[shortcut.action]) return;
+    e.preventDefault();
+    actions[shortcut.action](shortcut.arg);
+  });
 }
 
 function handleDownload() {
   const link = document.createElement("a");
   link.download = `pose-${Date.now()}.png`;
-  link.href = poseCanvas.toDataURL("image/png");
+  link.href = skeleton.toDataURL("image/png");
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -233,22 +370,22 @@ function handleImageFile(file) {
       currentImageDataUrl = result;
       if (inputImageEl) {
         inputImageEl.src = result;
-        inputImageEl.style.display = "block";
+        inputImageEl.hidden = false;
       }
       if (resultImageEl) {
-        resultImageEl.style.display = "none";
+        resultImageEl.hidden = true;
         resultImageEl.src = "";
       }
-      setAiStatus("Image loaded. Tap “Apply pose to image”.");
+      setAiStatus("");
       setGenerateButtonDisabled(false);
     } else {
-      setAiStatus("Could not read image.");
+      setAiStatus("Could not read that file. Use a PNG, JPEG or WebP image.");
       setGenerateButtonDisabled(true);
     }
   };
 
   reader.onerror = () => {
-    setAiStatus("Failed to load image.");
+    setAiStatus("Could not read that file. Use a PNG, JPEG or WebP image.");
     setGenerateButtonDisabled(true);
   };
 
@@ -261,22 +398,24 @@ async function handleGenerateImage() {
   }
 
   isGeneratingImage = true;
-  setAiStatus("Transforming pose with AI… (this can take a few seconds)");
+  setAiStatus("Rendering…");
   setGenerateButtonDisabled(true);
 
   try {
-    const poseImageDataUrl = poseCanvas.toDataURL("image/png");
-    const url = await generatePoseImage(currentImageDataUrl, pose, poseImageDataUrl);
+    const poseImageDataUrl = skeleton.toDataURL("image/png");
+    const url = await generatePoseImage(currentImageDataUrl, pose, poseImageDataUrl, {
+      includeHands: styleDrawsHands(styleId),
+    });
     if (url && resultImageEl) {
       resultImageEl.src = url;
-      resultImageEl.style.display = "block";
-      setAiStatus("Done! Pose applied to image.");
+      resultImageEl.hidden = false;
+      setAiStatus("");
     } else {
-      setAiStatus("AI transform failed or is unavailable.");
+      setAiStatus("Render failed. Try another model.");
     }
   } catch (e) {
     console.error(e);
-    setAiStatus(`AI generation failed: ${e?.message || "unknown error"}`);
+    setAiStatus(`Render failed: ${e?.message || "unknown error"}. Try another model.`);
   } finally {
     isGeneratingImage = false;
     // Re-enable only if we still have a source image
@@ -348,7 +487,6 @@ async function initImageModelPicker() {
     const model = imageModelSelect.value || "kontext";
     setSelectedImageModel(model);
     localStorage.setItem(IMAGE_MODEL_STORAGE_KEY, model);
-    setAiStatus(`Image model: ${model}`);
   });
 
   if (allowPaidModelsInput) {

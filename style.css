@@ -1,3 +1,32 @@
+/*
+  Pose Editor: a dark, neutral tool shell so the only colour on screen is the
+  OpenPose skeleton. Graphite greys for chrome, light fill for whatever is
+  active or primary, orange only for pins (matches OVERLAY.pinColor).
+*/
+
+:root {
+  --bg: #16181c;
+  --panel: #1d2025;
+  --raised: #272b31;
+  --raised-hover: #31363d;
+  --line: #2e3238;
+  --text: #e3e6ea;
+  --muted: #8b929c;
+  --active-bg: #e3e6ea;
+  --active-text: #16181c;
+  --pin: #f97316;
+
+  --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --radius: 6px;
+  --control-h: 30px;
+  --toolbar-h: 48px;
+  --panel-w: 280px;
+  --gap: 8px;
+  --pad: 16px;
+}
+
 *,
 *::before,
 *::after {
@@ -7,381 +36,434 @@
 html,
 body {
   margin: 0;
-  padding: 0;
   height: 100%;
-  background: #050507;
-  color: #e5e5e5;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
-    "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 var(--text-md) / 1.4 var(--font);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
 }
 
 body {
   overflow: hidden;
 }
 
-.app-root {
-  display: flex;
-  flex-direction: row;
-  height: 100vh;
-  width: 100vw;
-  background: radial-gradient(circle at center, #18181b, #020204);
-  color: #e5e5e5;
+button,
+select,
+input {
+  font: inherit;
+  color: inherit;
 }
 
-/* Sidebar */
-
-.sidebar {
-  width: 260px;
-  max-width: 40vw;
-  padding: 12px 12px 12px 12px;
-  background: #09090b;
-  border-right: 1px solid #27272a;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
 }
 
-.sidebar-header {
+[hidden] {
+  display: none !important;
+}
+
+/* ---- Shell ------------------------------------------------------------- */
+
+.app {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--panel-w);
+  grid-template-rows: var(--toolbar-h) minmax(0, 1fr);
+  grid-template-areas:
+    "toolbar toolbar"
+    "workspace panel";
+  height: 100dvh;
+}
+
+.toolbar {
+  grid-area: toolbar;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
+  gap: var(--pad);
+  padding: 0 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
 }
 
-.logo-text {
-  font-weight: 700;
-  font-size: 1.1rem;
-  background: linear-gradient(90deg, #f97316, #facc15);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+.wordmark {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
 }
 
-.logo-sub {
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #71717a;
-  margin-top: 2px;
-}
-
-.version-badge {
-  font-size: 0.7rem;
-  padding: 2px 6px;
-  border-radius: 999px;
-  border: 1px solid #27272a;
-  color: #a1a1aa;
-}
-
-/* Sections */
-
-.sidebar-section {
-  padding: 8px 0;
-  border-top: 1px solid #18181b;
-}
-
-/* Preview grid */
-
-.preview-grid {
+.tool-group {
   display: flex;
-  gap: 6px;
-  margin-top: 8px;
+  align-items: center;
+  gap: 2px;
 }
 
-.preview-item {
-  flex: 1 1 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.tool-group-end {
+  margin-left: auto;
+  gap: var(--gap);
 }
 
-.preview-label {
-  font-size: 0.65rem;
-  color: #a1a1aa;
+.workspace {
+  grid-area: workspace;
+  container-type: size;
+  display: grid;
+  place-items: center;
+  min-height: 0;
 }
 
-.preview-frame {
+.panel {
+  grid-area: panel;
+  overflow-y: auto;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+}
+
+/* ---- Canvas ------------------------------------------------------------ */
+
+/* Largest square that fits the workspace, with breathing room around it. */
+.canvas-frame {
+  --frame-padding: 0px;
   position: relative;
-  border-radius: 8px;
-  background: #020204;
-  border: 1px solid #18181b;
-  padding: 2px;
+  width: min(100cqw - 2 * var(--pad), 100cqh - 2 * var(--pad));
   aspect-ratio: 1 / 1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   overflow: hidden;
 }
 
-.preview-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 6px;
+/* Three stacked layers (see SkeletonCanvas): grid below, pose canvas, then
+   the interaction overlay. Only the pose canvas takes input. */
+.canvas-frame canvas {
+  position: absolute;
+  inset: var(--frame-padding);
+  display: block;
+  width: calc(100% - 2 * var(--frame-padding));
+  height: calc(100% - 2 * var(--frame-padding));
 }
 
-.sidebar-section:first-of-type {
-  border-top: none;
+#poseCanvas {
+  z-index: 1;
+  /* Pointer Events handle touch; stop the browser from scrolling/zooming. */
+  touch-action: none;
 }
 
-.btn-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 6px;
+canvas.pose-overlay {
+  z-index: 2;
+  pointer-events: none;
 }
 
-/* Buttons */
+/* ---- Controls ---------------------------------------------------------- */
 
-.btn {
+.btn,
+.icon-btn,
+.segmented-btn {
   appearance: none;
-  border: none;
-  outline: none;
-  border-radius: 999px;
-  padding: 7px 10px;
-  font-size: 0.78rem;
-  font-weight: 500;
-  background: #18181b;
-  color: #e5e5e5;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
+  height: var(--control-h);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--raised);
   cursor: pointer;
-  min-width: 0;
   touch-action: manipulation;
 }
 
-.btn-secondary {
-  background: #0b0b0f;
-  border: 1px solid #27272a;
+.btn {
+  padding: 0 12px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
-.btn-full {
-  width: 100%;
-  margin-top: 4px;
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: var(--control-h);
+  padding: 0;
+  background: transparent;
 }
 
-.btn:disabled {
-  opacity: 0.4;
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.btn:hover:not(:disabled),
+.icon-btn:hover:not(:disabled),
+.segmented-btn:hover:not([aria-pressed="true"]) {
+  background: var(--raised-hover);
+}
+
+.btn:disabled,
+.icon-btn:disabled {
+  color: var(--muted);
+  opacity: 0.5;
   cursor: default;
 }
 
-.btn:hover:not(:disabled) {
-  background: #262626;
+.btn-primary,
+.btn-primary:hover:not(:disabled) {
+  background: var(--active-bg);
+  color: var(--active-text);
 }
 
-.btn-mini {
-  appearance: none;
-  border-radius: 999px;
-  border: 1px solid #27272a;
-  padding: 2px 8px;
-  font-size: 0.68rem;
+.btn-pin {
   background: transparent;
-  color: #a1a1aa;
-  cursor: pointer;
+  box-shadow: inset 0 0 0 1px var(--pin);
+  color: var(--pin);
 }
 
-.btn-mini:hover {
-  background: #18181b;
+/* Drag mode switch: one track, the pressed mode lit. */
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--bg);
 }
 
-.field-label {
-  font-size: 0.75rem;
-  color: #d4d4d8;
+.segmented-btn {
+  min-width: 52px;
+  padding: 0 12px;
+  background: transparent;
+  font-weight: 500;
+  color: var(--muted);
 }
 
-.field-label-row {
+.segmented-btn[aria-pressed="true"] {
+  background: var(--active-bg);
+  color: var(--active-text);
+}
+
+.field {
+  width: 100%;
+  height: var(--control-h);
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+/* Tooltips: name + shortcut for controls, shown on hover or keyboard focus. */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: pre;
+  pointer-events: none;
+}
+
+/* ---- Properties panel -------------------------------------------------- */
+
+.panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding: var(--pad);
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-title {
+  margin: 0 0 4px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.btn-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gap);
+}
+
+.field-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
+  gap: var(--gap);
 }
 
-.field-hint {
-  font-size: 0.65rem;
-  color: #71717a;
+.key-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--gap);
 }
 
-.checkbox-label {
-  display: flex;
+.key-row .btn {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin: 6px 0;
+  color: var(--text);
+  text-decoration: none;
 }
 
-.select-input {
-  width: 100%;
-  border-radius: 8px;
-  border: 1px solid #27272a;
-  background: #050508;
-  color: #e5e5e5;
-  padding: 6px 8px;
-  font-size: 0.75rem;
-  outline: none;
-  margin: 4px 0;
+.slider-row {
+  display: grid;
+  grid-template-columns: 48px 1fr 28px;
+  align-items: center;
+  gap: var(--gap);
 }
 
-.select-input:focus {
-  border-color: #f97316;
+.slider-row output {
+  text-align: right;
+  color: var(--muted);
 }
-
-/* Inputs */
 
 input[type="range"] {
   width: 100%;
+  accent-color: var(--text);
 }
 
-.textarea {
-  width: 100%;
-  resize: none;
-  border-radius: 10px;
-  border: 1px solid #27272a;
-  background: #050508;
-  color: #e5e5e5;
-  padding: 6px 8px;
-  font-size: 0.75rem;
-  outline: none;
-}
-
-.textarea:focus {
-  border-color: #f97316;
-}
-
-/* AI */
-
-.ai-section {
-  font-size: 0.75rem;
-}
-
-.ai-output {
-  min-height: 44px;
-  max-height: 120px;
-  overflow-y: auto;
-  border-radius: 10px;
-  border: 1px solid #18181b;
-  background: #020204;
-  padding: 6px 8px;
-  font-size: 0.72rem;
-  color: #a1a1aa;
-}
-
-/* Canvas side */
-
-.canvas-area {
-  flex: 1;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 12px;
-}
-
-.canvas-frame {
-  position: relative;
-  border-radius: 12px;
-  padding: 2px;
-  background: linear-gradient(135deg, #525252, #a3a3a3);
-  box-shadow: 0 0 40px rgba(0, 0, 0, 0.6);
-  width: min(92vw, 92vh);
-  max-width: 800px;
-  aspect-ratio: 1 / 1;
+.check-row {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: var(--gap);
+  color: var(--muted);
 }
 
-canvas {
+.check-row input {
+  accent-color: var(--text);
+}
+
+/* Reference image: the whole tile is the file picker and a drop target. */
+.drop-zone {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.drop-zone:hover,
+.drop-zone.is-over,
+.drop-zone:focus-within {
+  border-color: var(--muted);
+  color: var(--text);
+}
+
+.drop-zone input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.drop-zone img {
   width: 100%;
   height: 100%;
-  display: block;
-  border-radius: 10px;
-  background: radial-gradient(circle at center, #1a1a1a, #050505);
+  object-fit: contain;
 }
 
-/* Instructions pill */
-
-.instructions-pill {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(15, 15, 20, 0.9);
-  color: #e4e4e7;
-  border: 1px solid rgba(250, 250, 250, 0.1);
-  font-size: 0.72rem;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  backdrop-filter: blur(10px);
-  z-index: 10;
+.drop-zone img:not([hidden]) + .drop-zone-empty {
+  display: none;
 }
 
-.pill-close {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: #a1a1aa;
-  font-size: 0.8rem;
-  cursor: pointer;
-  padding: 0 2px;
+.status:empty {
+  display: none;
 }
 
-.canvas-meta {
-  position: absolute;
-  bottom: 8px;
-  right: 12px;
-  font-size: 0.7rem;
-  color: #71717a;
+.status {
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 
-/* Mobile layout */
+.result-image {
+  width: 100%;
+  border-radius: var(--radius);
+}
+
+/* ---- Shortcuts popover ------------------------------------------------- */
+
+.shortcuts-panel {
+  margin: calc(var(--toolbar-h) + 4px) 12px auto auto;
+  padding: var(--pad);
+  width: min(360px, calc(100vw - 24px));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+}
+
+.shortcut-list {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px var(--pad);
+  margin: 0;
+}
+
+.shortcut-list dt {
+  color: var(--text);
+}
+
+.shortcut-list dd {
+  margin: 0;
+  color: var(--muted);
+  text-align: right;
+}
+
+/* ---- Narrow screens: canvas on top, panel scrolls below ----------------- */
 
 @media (max-width: 768px) {
-  .app-root {
-    flex-direction: column-reverse;
+  :root {
+    --pad: 12px;
   }
 
-  .sidebar {
-    width: 100%;
-    max-width: none;
-    border-right: none;
-    border-top: 1px solid #27272a;
-    flex-direction: row;
-    flex-wrap: wrap;
-    padding: 8px 10px;
-    gap: 8px;
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--toolbar-h) min(100vw, 60dvh) minmax(0, 1fr);
+    grid-template-areas:
+      "toolbar"
+      "workspace"
+      "panel";
   }
 
-  .sidebar-header {
-    width: 100%;
-    margin-bottom: 0;
+  .toolbar {
+    gap: var(--gap);
+    padding: 0 8px;
   }
 
-  .sidebar-section {
-    border-top: none;
-    padding-top: 0;
-    padding-bottom: 0;
+  .segmented-btn {
+    min-width: 0;
+    padding: 0 10px;
   }
 
-  .sidebar-section.ai-section {
-    flex: 1 1 100%;
+  /* Keyboard shortcuts panel: no keyboard on phones. */
+  .shortcuts-btn {
+    display: none;
   }
 
-  .canvas-area {
-    padding: 8px;
+  .wordmark {
+    display: none;
   }
 
-  .canvas-frame {
-    width: min(92vw, 70vh);
+  .panel {
+    border-left: 0;
+    border-top: 1px solid var(--line);
   }
 
-  .instructions-pill {
-    font-size: 0.68rem;
-    max-width: 90vw;
-  }
-
-  .logo-sub {
+  /* Hover tooltips don't exist on touch. */
+  [data-tip]::after {
     display: none;
   }
 }

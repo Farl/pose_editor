@@ -1,3 +1,163 @@
+import { SHORTCUTS, GESTURES } from "./editorConfig.js";
+
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+/// Human-readable key combo for a SHORTCUTS entry, e.g. "Cmd+Shift+Z" or "M".
+function formatKeys({ key, mod, shift }) {
+  return [mod && (IS_MAC ? "Cmd" : "Ctrl"), shift && "Shift", key.toUpperCase()]
+    .filter(Boolean)
+    .join("+");
+}
+
+/// SHORTCUTS grouped by command label: [{ label, keys: ["Cmd+Shift+Z", ...] }].
+function groupShortcuts() {
+  const groups = new Map();
+  for (const s of SHORTCUTS) {
+    if (!groups.has(s.label)) groups.set(s.label, []);
+    groups.get(s.label).push(formatKeys(s));
+  }
+  return [...groups].map(([label, keys]) => ({ label, keys }));
+}
+
+/// First shortcut bound to `action` (and `arg`, if given), or undefined.
+function findShortcut(action, arg) {
+  return SHORTCUTS.find((s) => s.action === action && (arg === undefined || s.arg === arg));
+}
+
+/// Name a control for tooltips and screen readers: "Undo  Cmd+Z".
+/// Icon buttons have no text, so the tooltip is how they explain themselves.
+function nameControl(el, name, shortcut) {
+  el.setAttribute("aria-label", name);
+  el.dataset.tip = shortcut ? `${name}  ${formatKeys(shortcut)}` : name;
+  if (shortcut) el.setAttribute("aria-keyshortcuts", formatKeys(shortcut).replace("Cmd", "Meta"));
+}
+
+/// Wire a button id to a handler, ignoring ids missing from the page. Buttons
+/// with data-action get their tooltip from the matching shortcut.
+function bindClick(id, handler) {
+  const el = document.getElementById(id);
+  if (!el) return el;
+  if (handler) el.addEventListener("click", () => handler());
+  const shortcut = el.dataset.action && findShortcut(el.dataset.action);
+  if (shortcut) nameControl(el, shortcut.label, shortcut);
+  return el;
+}
+
+/// Show a range input's value in its <output for="id">, with as many
+/// decimals as its step (step 0.1 shows "1.0", not "1").
+function showRangeValue(el) {
+  const out = document.querySelector(`output[for="${el.id}"]`);
+  const decimals = (el.step.split(".")[1] || "").length;
+  if (out) out.textContent = Number(el.value).toFixed(decimals);
+}
+
+/// Wire a range input to a numeric handler. A range input always holds a
+/// number within its min/max, so no validation is needed.
+function bindRange(id, handler) {
+  const el = document.getElementById(id);
+  if (!el) return el;
+  showRangeValue(el);
+  el.addEventListener("input", () => {
+    showRangeValue(el);
+    if (handler) handler(Number(el.value));
+  });
+  return el;
+}
+
+/// Accept an image dropped onto `zone`, in addition to its file input.
+function bindImageDrop(zone, onFile) {
+  if (!zone || !onFile) return;
+  const setOver = (over) => zone.classList.toggle("is-over", over);
+  zone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    setOver(true);
+  });
+  zone.addEventListener("dragleave", () => setOver(false));
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    setOver(false);
+    const file = [...(e.dataTransfer?.files || [])].find((f) => f.type.startsWith("image/"));
+    if (file) onFile(file);
+  });
+}
+
+/// Segmented toggle in container `groupId`: one button per {id, label, title},
+/// the active one marked aria-pressed. Returns a setter for the active id.
+/// `shortcutAction` names the SHORTCUTS action whose `arg` is the item id.
+function bindSegmented(groupId, items, onChange, shortcutAction) {
+  const group = document.getElementById(groupId);
+  const buttons = items.map(({ id, label, title }) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "segmented-btn";
+    btn.textContent = label;
+    btn.dataset.value = id;
+    if (title) nameControl(btn, title, shortcutAction && findShortcut(shortcutAction, id));
+    btn.addEventListener("click", () => onChange && onChange(id));
+    return btn;
+  });
+  if (group) group.append(...buttons);
+  return (value) => {
+    for (const btn of buttons) btn.setAttribute("aria-pressed", String(btn.dataset.value === value));
+  };
+}
+
+/// A <select> used as a menu: picking an entry calls `onSelect(value)`, then it
+/// returns to its placeholder so the same entry can be picked again.
+/// `groups` is [{ label?, options: [{ value, label }] }]; labelled groups
+/// become <optgroup>s.
+function bindMenuSelect(id, placeholder, groups, onSelect) {
+  const select = document.getElementById(id);
+  if (!select) return;
+  const first = new Option(placeholder, "");
+  first.disabled = true;
+  select.append(first);
+  for (const { label, options } of groups) {
+    const opts = options.map((o) => new Option(o.label, o.value));
+    if (label) {
+      const group = document.createElement("optgroup");
+      group.label = label;
+      group.append(...opts);
+      select.append(group);
+    } else {
+      select.append(...opts);
+    }
+  }
+  select.value = "";
+  select.addEventListener("change", () => {
+    const value = select.value;
+    select.value = "";
+    if (value && onSelect) onSelect(value);
+  });
+}
+
+/// A plain <select> holding a setting. Returns a setter for its value.
+function bindSelect(id, options, onChange) {
+  const select = document.getElementById(id);
+  if (!select) return () => {};
+  select.append(...options.map((o) => new Option(o.label, o.value)));
+  select.addEventListener("change", () => onChange && onChange(select.value));
+  return (value) => {
+    select.value = value;
+  };
+}
+
+/// Fill the shortcuts panel from SHORTCUTS and GESTURES.
+function renderShortcutList(list) {
+  if (!list) return;
+  const rows = [
+    ...groupShortcuts().map(({ label, keys }) => [keys.join(", "), label]),
+    ...GESTURES.map(({ input, label }) => [input, label]),
+  ];
+  for (const [keys, label] of rows) {
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = keys;
+    list.append(dt, dd);
+  }
+}
+
 export function initSidebar({
   onReset,
   onUndo,
@@ -8,49 +168,61 @@ export function initSidebar({
   onLinkScaleChange,
   onImageFileChange,
   onGenerateImageClick,
+  dragModes = [],
+  onDragModeChange,
+  styles = [],
+  onStyleChange,
+  handDetails = [],
+  onHandDetailChange,
+  handPoseGroups = [],
+  onHandPoseSelect,
+  apiKeyUrl,
+  onApiKeyChange,
+  presets = [],
+  onPresetSelect,
+  onCopySide,
+  onUnpinAll,
 }) {
-  const undoBtn = document.getElementById("undoBtn");
-  const redoBtn = document.getElementById("redoBtn");
-  const resetBtn = document.getElementById("resetBtn");
-  const mirrorBtn = document.getElementById("mirrorBtn");
-  const downloadBtn = document.getElementById("downloadBtn");
-  const jointSizeInput = document.getElementById("jointSizeInput");
-  const linkScaleInput = document.getElementById("linkScaleInput");
+  const undoBtn = bindClick("undoBtn", onUndo);
+  const redoBtn = bindClick("redoBtn", onRedo);
+  bindClick("resetBtn", onReset);
+  bindClick("mirrorBtn", onMirror);
+  bindClick("downloadBtn", onDownload);
+  bindClick("generateImageBtn", onGenerateImageClick);
+  bindClick("copyLeftBtn", onCopySide && (() => onCopySide("l")));
+  bindClick("copyRightBtn", onCopySide && (() => onCopySide("r")));
+  const unpinAllBtn = bindClick("unpinAllBtn", onUnpinAll);
+
+  bindRange("jointSizeInput", onJointSizeChange);
+  bindRange("linkScaleInput", onLinkScaleChange);
+
   const imageInput = document.getElementById("imageInput");
-  const generateImageBtn = document.getElementById("generateImageBtn");
-
-  resetBtn.addEventListener("click", () => onReset && onReset());
-  undoBtn.addEventListener("click", () => onUndo && onUndo());
-  redoBtn.addEventListener("click", () => onRedo && onRedo());
-  mirrorBtn.addEventListener("click", () => onMirror && onMirror());
-  downloadBtn.addEventListener("click", () => onDownload && onDownload());
-
-  jointSizeInput.addEventListener("input", (e) => {
-    const v = Number(e.target.value) || 8;
-    onJointSizeChange && onJointSizeChange(v);
-  });
-
-  if (linkScaleInput) {
-    linkScaleInput.addEventListener("input", (e) => {
-      const v = Number(e.target.value) || 1;
-      onLinkScaleChange && onLinkScaleChange(v);
-    });
-  }
-
   if (imageInput) {
     imageInput.addEventListener("change", (e) => {
-      const target = e.target;
-      const file = target && target.files && target.files[0];
-      if (file && onImageFileChange) {
-        onImageFileChange(file);
-      }
+      const file = e.target?.files?.[0];
+      if (file && onImageFileChange) onImageFileChange(file);
     });
   }
+  bindImageDrop(document.getElementById("imageDrop"), onImageFileChange);
 
-  if (generateImageBtn) {
-    generateImageBtn.addEventListener("click", () => {
-      onGenerateImageClick && onGenerateImageClick();
-    });
+  renderShortcutList(document.getElementById("shortcutList"));
+
+  const setDragMode = bindSegmented("dragModeGroup", dragModes, onDragModeChange, "dragMode");
+  const setHandDetail = bindSegmented("handDetailGroup", handDetails, onHandDetailChange);
+  const setStyle = bindSelect("styleSelect", styles, onStyleChange);
+  bindMenuSelect("presetSelect", "Preset pose", [{ options: presets }], onPresetSelect);
+  bindMenuSelect("handPoseSelect", "Hand pose", handPoseGroups, onHandPoseSelect);
+
+  // API key: kept by the caller (this browser only), sent only to the provider.
+  const apiKeyInput = document.getElementById("apiKeyInput");
+  if (apiKeyInput && onApiKeyChange) {
+    apiKeyInput.addEventListener("input", () => onApiKeyChange(apiKeyInput.value));
+  }
+  const apiKeyLink = document.getElementById("apiKeyLink");
+  if (apiKeyLink && apiKeyUrl) apiKeyLink.href = apiKeyUrl;
+
+  function setApiKey(key) {
+    if (apiKeyInput) apiKeyInput.value = key || "";
   }
 
   function setUndoRedoState(canUndo, canRedo) {
@@ -58,7 +230,28 @@ export function initSidebar({
     redoBtn.disabled = !canRedo;
   }
 
+  /// "Unpin all" only exists while something is pinned.
+  function setPinCount(count) {
+    if (!unpinAllBtn) return;
+    unpinAllBtn.hidden = count === 0;
+    unpinAllBtn.textContent = `Unpin all (${count})`;
+  }
+
+  /// Set a slider from saved state and show its value.
+  function setRangeValue(id, value) {
+    const el = document.getElementById(id);
+    if (!el || typeof value !== "number") return;
+    el.value = String(value);
+    showRangeValue(el);
+  }
+
   return {
+    setDragMode,
+    setHandDetail,
+    setStyle,
+    setApiKey,
     setUndoRedoState,
+    setPinCount,
+    setRangeValue,
   };
 }
