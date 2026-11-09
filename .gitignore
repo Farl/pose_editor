@@ -1,0 +1,5 @@
+# Local secrets. The site never reads these: users enter their own key in
+# the UI. .env only keeps the maintainer's keys so they aren't lost.
+.env
+.env.*
+!.env.example
