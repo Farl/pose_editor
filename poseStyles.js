@@ -18,6 +18,9 @@
 ///            a limb takes the colour of its second keypoint.
 ///   Full     DWPose / ControlNet openpose_full: COCO-18 body plus 21-point
 ///            hands, each hand edge coloured by hue (edge / 20), keypoints blue.
+///   BODY_25 + hands  BODY_25 body (with the neck-pelvis spine and hip line)
+///            plus the full style's hands, so finger shapes still reach the guide
+///            and the prompt.
 ///   Sides    Animation / mocap convention, editor-friendly: figure's right
 ///            red, left blue, centre line green (SIDE_COLORS); draws every rig bone.
 
@@ -152,6 +155,7 @@ export const POSE_STYLES = {
   coco18: { label: "OpenPose COCO-18", build: coco18Body },
   body25: { label: "OpenPose BODY_25", build: body25 },
   full: { label: "OpenPose full (DWPose)", build: (o) => merge(coco18Body(o), openposeHands(o)) },
+  body25hands: { label: "OpenPose BODY_25 + hands", build: (o) => merge(body25(o), openposeHands(o)) },
   sides: { label: "Left / right", build: sides },
 };
 

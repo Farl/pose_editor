@@ -324,6 +324,37 @@ canvas.pose-overlay {
   color: var(--muted);
 }
 
+/* Collapsible section: the title is the toggle. */
+.panel-details > summary {
+  margin: 0;
+  cursor: pointer;
+}
+
+.panel-details:not([open]) {
+  gap: 0;
+}
+
+.panel-details > .btn {
+  width: 100%;
+}
+
+.view-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+/* Depth sliders: longer labels ("Right hand") and signed values. */
+.view-sliders .slider-row {
+  grid-template-columns: 72px 1fr 32px;
+}
+
+.panel-note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
 input[type="range"] {
   width: 100%;
   accent-color: var(--text);

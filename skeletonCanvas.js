@@ -1,6 +1,7 @@
 import { JOINT_KEYS, clonePose, isFingerJoint } from "./pose.js";
 import { applyDrag, isPinnable, isGrabbable } from "./poseRig.js";
 import { buildRenderList } from "./poseStyles.js";
+import { createDefaultView, depthScale, segmentDepthScale, jointDepth, headCircle } from "./poseView.js";
 import {
   CANVAS,
   PICKING,
@@ -10,6 +11,7 @@ import {
   DEFAULT_DRAG_MODE,
   DEFAULT_POSE_STYLE,
   EXPORT_BACKGROUND,
+  VIEW,
 } from "./editorConfig.js";
 
 /// `order` with `keys` moved to the end (= drawn on top), each group keeping
@@ -42,7 +44,9 @@ export function isValidDrawOrder(order) {
 /// Stacking: the last joint you adjust, and every joint that drag moved, are
 /// brought to the front (`drawOrder`, bottom to top). Bones follow their
 /// top-most end, so a limb you just posed across the body draws over it, and
-/// where joints overlap the pointer grabs the one on top.
+/// where joints overlap the pointer grabs the one on top. With a depth view
+/// (poseView.js), hands and feet set toward the camera stack above everything
+/// else and those set away below, whatever the drag order.
 ///
 /// Gestures: drag a joint to pose (behaviour follows `dragMode`: IK, FK or Free); Alt-drag to move a single joint freely;
 /// double-click / double-tap a hand or foot to pin it in place.
@@ -57,6 +61,7 @@ export class SkeletonCanvas {
       styleId = DEFAULT_POSE_STYLE,
       handDetail = HANDS.defaultDetail,
       drawOrder = JOINT_KEYS,
+      view = createDefaultView(),
       pins = [],
       onChange,
       onChangeEnd,
@@ -78,6 +83,8 @@ export class SkeletonCanvas {
     this.dragMode = dragMode;
     this.styleId = styleId;
     this.handDetail = handDetail;
+    /// Depth and camera (poseView.js).
+    this.view = view;
     /// Rig joints the current style draws (set by draw()).
     this.drawnJoints = new Set();
     this.pins = new Set(pins.filter(isPinnable));
@@ -123,6 +130,12 @@ export class SkeletonCanvas {
   /// Rendering style id (see POSE_STYLES).
   setStyle(styleId) {
     this.styleId = styleId;
+    this.draw();
+  }
+
+  /// Depth and camera view (poseView.js).
+  setView(view) {
+    this.view = view;
     this.draw();
   }
 
@@ -318,8 +331,9 @@ export class SkeletonCanvas {
     const radius = Math.max(radiusPx * this._canvasScale(), this.jointRadius);
     let best = null;
     let bestDist = radius;
-    for (let i = this.drawOrder.length - 1; i >= 0; i--) {
-      const key = this.drawOrder[i];
+    const order = this._layerOrder();
+    for (let i = order.length - 1; i >= 0; i--) {
+      const key = order[i];
       const j = this.pose.joints[key];
       if (!j || !isGrabbable(key, this.handDetail)) continue;
       const d = Math.hypot(j.x - point.x, j.y - point.y);
@@ -337,9 +351,19 @@ export class SkeletonCanvas {
     return isFingerJoint(key) ? this.jointRadius * HANDS.pointScale : this.jointRadius;
   }
 
+  /// drawOrder with depth applied: joints nearer the camera on top (stable,
+  /// so at equal depth the drag order still decides).
+  _layerOrder() {
+    return this.drawOrder
+      .map((key, i) => [key, i])
+      .sort(([a, i], [b, j]) => jointDepth(this.view, a) - jointDepth(this.view, b) || i - j)
+      .map(([key]) => key);
+  }
+
   draw() {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this._drawHead(ctx);
 
     // Segments and points from the style, stacked bottom to top in drawOrder.
     // Each segment is drawn in the layer of its top-most end, followed by its
@@ -350,14 +374,15 @@ export class SkeletonCanvas {
     /// Rig joints this style draws; the rest get overlay handles.
     this.drawnJoints = new Set(Object.keys(pointsByKey));
 
-    const rank = Object.fromEntries(this.drawOrder.map((k, i) => [k, i]));
+    const order = this._layerOrder();
+    const rank = Object.fromEntries(order.map((k, i) => [k, i]));
     const segmentsByTop = {};
     for (const seg of segments) {
       const top = rank[seg.a] > rank[seg.b] ? seg.a : seg.b;
       (segmentsByTop[top] ||= []).push(seg);
     }
     const drawPoints = (key) => (pointsByKey[key] || []).forEach((p) => this._drawPoint(ctx, p));
-    for (const key of this.drawOrder) {
+    for (const key of order) {
       const segs = segmentsByTop[key] || [];
       for (const seg of segs) this._drawSegment(ctx, seg);
       for (const seg of segs) drawPoints(seg.a === key ? seg.b : seg.a);
@@ -369,10 +394,12 @@ export class SkeletonCanvas {
 
   /// A style segment: a filled ellipse (OpenPose "stick", `width` is its
   /// half-thickness) or a round-capped line (`width` is its thickness).
-  _drawSegment(ctx, { a, b, color, shape, width }) {
+  /// Widths and radii scale with depth (depthScale): 1 in the default view.
+  _drawSegment(ctx, { a, b, color, shape, width: baseWidth }) {
     const ja = this.pose.joints[a];
     const jb = this.pose.joints[b];
     if (!ja || !jb) return;
+    const width = baseWidth * segmentDepthScale(this.view, a, b);
     ctx.save();
     if (shape === "line") {
       ctx.strokeStyle = color;
@@ -400,8 +427,21 @@ export class SkeletonCanvas {
     if (!j) return;
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(j.x, j.y, radius, 0, Math.PI * 2);
+    ctx.arc(j.x, j.y, radius * depthScale(this.view, key), 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  /// Head outline for a big-headed view (headCircle), under the skeleton.
+  _drawHead(ctx) {
+    const head = headCircle(this.pose.joints, this.view);
+    if (!head) return;
+    ctx.save();
+    ctx.strokeStyle = VIEW.headColor;
+    ctx.lineWidth = this.jointRadius * VIEW.headLineToJoint;
+    ctx.beginPath();
+    ctx.arc(head.x, head.y, head.radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   drawOverlay() {

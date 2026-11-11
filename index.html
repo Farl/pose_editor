@@ -82,6 +82,15 @@
         </label>
       </section>
 
+      <!-- Depth and camera (poseView.js). Collapsed unless a setting is in use;
+           sidebar.js fills in the camera options and the sliders. -->
+      <details id="viewPanel" class="panel-section panel-details">
+        <summary class="panel-title">Depth and camera</summary>
+        <select id="cameraSelect" class="field" aria-label="Camera"></select>
+        <div id="viewSliders" class="view-sliders"></div>
+        <button id="resetViewBtn" class="btn">Reset depth and camera</button>
+      </details>
+
       <section class="panel-section">
         <h2 class="panel-title">AI render</h2>
         <label id="imageDrop" class="drop-zone">
