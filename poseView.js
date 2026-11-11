@@ -10,7 +10,7 @@
 /// default view changes neither, so posing without it works as before.
 
 import { VIEW } from "./editorConfig.js";
-import { IK_CHAINS, SIDE_PAIRS, isFingerJoint } from "./pose.js";
+import { IK_CHAINS, SIDE_PAIRS, isFingerJoint, createDefaultPose } from "./pose.js";
 import { getSubtree } from "./poseRig.js";
 
 /// True for a hand's depth end (its wrist); the other ends are feet (ankles).
@@ -90,17 +90,61 @@ export function segmentDepthScale(view, a, b) {
   return (depthScale(view, a) + depthScale(view, b)) / 2;
 }
 
-/// Head outline for headScale > 1, or null: { x, y, radius }. Its size is
-/// relative to the torso; it grows away from the neck toward the face, so the
-/// face keypoints end up in its lower half, as in big-headed characters.
+const FACE_KEYS = ["nose", "eye_r", "eye_l", "ear_r", "ear_l"];
+
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const pathLength = (joints, keys) => keys.slice(1).reduce((sum, k, i) => sum + dist(joints[keys[i]], joints[k]), 0);
+
+/// Face centre and the head radius the face keypoints imply (VIEW.headRadiusToFaceSpan).
+function faceHead(joints) {
+  const face = FACE_KEYS.map((k) => joints[k]);
+  const center = {
+    x: face.reduce((s, p) => s + p.x, 0) / face.length,
+    y: face.reduce((s, p) => s + p.y, 0) / face.length,
+  };
+  const span = Math.max(...face.flatMap((a) => face.map((b) => dist(a, b))));
+  const reach = dist(center, joints.neck);
+  return { center, reach, radius: Math.max(span * VIEW.headRadiusToFaceSpan, reach * VIEW.headRadiusToNeckReach) };
+}
+
+/// Body lengths that each predict a realistic head size. A pose foreshortens
+/// some of them, so headCircle trusts whichever predicts the biggest head.
+const BODY_MEASURES = [
+  ["neck", "pelvis"],
+  ["shoulder_r", "shoulder_l"],
+  ...["r", "l"].flatMap((s) => [
+    [`shoulder_${s}`, `elbow_${s}`, `wrist_${s}`],
+    [`hip_${s}`, `knee_${s}`, `ankle_${s}`],
+  ]),
+];
+
+/// Head radius per unit of each measure, taken from the default (realistic) figure.
+const HEAD_PER_MEASURE = (() => {
+  const { joints } = createDefaultPose();
+  const head = faceHead(joints).radius;
+  return BODY_MEASURES.map((keys) => head / pathLength(joints, keys));
+})();
+
+/// Realistic head radius for this body, from its least foreshortened measure.
+function bodyHeadRadius(joints) {
+  return Math.max(...BODY_MEASURES.map((keys, i) => pathLength(joints, keys) * HEAD_PER_MEASURE[i]));
+}
+
+/// Head outline for headScale > 1, or null: { x, y, radius }.
+///   size      headScale x a realistic head for this body (bodyHeadRadius), so
+///             a foreshortened torso doesn't shrink it; never smaller than the
+///             head the face keypoints already draw (faceHead)
+///   position  on the face, grown away from the neck with the chin kept in
+///             place, so the face ends up in the lower half of a big head
 export function headCircle(joints, view) {
   if (view.headScale <= VIEW.head.min) return null;
-  const { neck, pelvis } = joints;
-  const face = ["nose", "eye_r", "eye_l", "ear_r", "ear_l"].map((k) => joints[k]);
-  const fx = face.reduce((s, p) => s + p.x, 0) / face.length;
-  const fy = face.reduce((s, p) => s + p.y, 0) / face.length;
-  const len = Math.hypot(fx - neck.x, fy - neck.y) || 1;
-  const radius = view.headScale * VIEW.headRadiusToTorso * Math.hypot(neck.x - pelvis.x, neck.y - pelvis.y);
-  const reach = radius * VIEW.headCenterFromNeck;
-  return { x: neck.x + ((fx - neck.x) / len) * reach, y: neck.y + ((fy - neck.y) / len) * reach, radius };
+  const face = faceHead(joints);
+  const radius = Math.max(view.headScale * bodyHeadRadius(joints), face.radius);
+  const grow = face.reach ? (radius - face.radius) / face.reach : 0;
+  const { center } = face;
+  return {
+    x: center.x + (center.x - joints.neck.x) * grow,
+    y: center.y + (center.y - joints.neck.y) * grow,
+    radius,
+  };
 }

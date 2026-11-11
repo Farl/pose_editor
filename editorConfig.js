@@ -72,10 +72,12 @@ export const VIEW = {
   /// Head size as a multiple of a realistic adult head; above 1 the guide draws
   /// a head outline and the prompt asks for that head-to-body ratio.
   head: { min: 1, max: 2.5, step: 0.1 },
-  /// Realistic head radius as a fraction of the torso (neck to pelvis).
-  headRadiusToTorso: 0.22,
-  /// Head centre sits this many head radii from the neck toward the face.
-  headCenterFromNeck: 1.1,
+  /// Head radius implied by the face keypoints alone: the larger of their
+  /// widest span (ear to ear when frontal) and the neck-to-face distance
+  /// (which still holds in profile, where the ears overlap), times these.
+  /// The outline is never smaller than this, and grows from it (poseView.js).
+  headRadiusToFaceSpan: 0.8,
+  headRadiusToNeckReach: 1,
   /// Head outline colour (neutral, not an OpenPose limb colour) and its line
   /// width as a fraction of the joint size.
   headColor: "rgb(153, 153, 153)",
