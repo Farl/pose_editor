@@ -132,6 +132,7 @@ test("OpenPose styles draw the reference keypoint and limb counts", () => {
   assert.deepEqual(count("coco18"), [18, 17]);
   assert.deepEqual(count("body25"), [25, 24]);
   assert.deepEqual(count("full"), [18 + 40, 17 + 40]);
+  assert.deepEqual(count("body25hands"), [25 + 40, 24 + 40]);
 });
 
 test("every style only references rig joints", () => {
@@ -164,10 +165,10 @@ test("finger states read each gesture's extended and curled fingers", () => {
   assert.deepEqual(extendedFingers("peace"), ["index", "middle"]);
 });
 
-test("finger keypoints are drawn by the full and left/right styles", () => {
+test("finger keypoints are drawn by the full, BODY_25 + hands and left/right styles", () => {
   assert.deepEqual(
     Object.keys(POSE_STYLES).filter(styleDrawsHands),
-    ["full", "sides"]
+    ["full", "body25hands", "sides"]
   );
 });
 

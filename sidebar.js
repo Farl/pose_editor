@@ -142,6 +142,47 @@ function bindSelect(id, options, onChange) {
   };
 }
 
+/// Depth and camera panel (#viewPanel): the camera <select> plus one slider
+/// per `sliders` entry ({ key, label, min, max, step, note? }); an entry with
+/// a `note` starts a group under that caption. Returns a setter that shows a
+/// view ({ camera, values: { key: number } }) and opens the panel when asked.
+function bindViewPanel({ cameras, sliders, onCameraChange, onSliderChange, onReset }) {
+  const panel = document.getElementById("viewPanel");
+  const container = document.getElementById("viewSliders");
+  const setCamera = bindSelect("cameraSelect", cameras, onCameraChange);
+  bindClick("resetViewBtn", onReset);
+  const inputs = {};
+  for (const { key, label, min, max, step, note } of sliders) {
+    if (note) {
+      const caption = document.createElement("p");
+      caption.className = "panel-note";
+      caption.textContent = note;
+      container?.append(caption);
+    }
+    const row = document.createElement("label");
+    row.className = "slider-row";
+    const name = document.createElement("span");
+    name.textContent = label;
+    const input = Object.assign(document.createElement("input"), { type: "range", id: `view-${key}`, min, max, step });
+    const out = document.createElement("output");
+    out.htmlFor = input.id;
+    row.append(name, input, out);
+    container?.append(row);
+    inputs[key] = input;
+  }
+  // Bound after the rows are in the page, so the <output>s can be found.
+  for (const [key, input] of Object.entries(inputs)) bindRange(input.id, (v) => onSliderChange?.(key, v));
+
+  return ({ camera, values }, { open = false } = {}) => {
+    setCamera(camera);
+    for (const [key, input] of Object.entries(inputs)) {
+      input.value = String(values[key]);
+      showRangeValue(input);
+    }
+    if (panel && open) panel.open = true;
+  };
+}
+
 /// Fill the shortcuts panel from SHORTCUTS and GESTURES.
 function renderShortcutList(list) {
   if (!list) return;
@@ -182,6 +223,7 @@ export function initSidebar({
   onPresetSelect,
   onCopySide,
   onUnpinAll,
+  view,
 }) {
   const undoBtn = bindClick("undoBtn", onUndo);
   const redoBtn = bindClick("redoBtn", onRedo);
@@ -212,6 +254,7 @@ export function initSidebar({
   const setStyle = bindSelect("styleSelect", styles, onStyleChange);
   bindMenuSelect("presetSelect", "Preset pose", [{ options: presets }], onPresetSelect);
   bindMenuSelect("handPoseSelect", "Hand pose", handPoseGroups, onHandPoseSelect);
+  const setView = view ? bindViewPanel(view) : () => {};
 
   // API key: kept by the caller (this browser only), sent only to the provider.
   const apiKeyInput = document.getElementById("apiKeyInput");
@@ -253,5 +296,6 @@ export function initSidebar({
     setUndoRedoState,
     setPinCount,
     setRangeValue,
+    setView,
   };
 }

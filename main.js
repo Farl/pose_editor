@@ -4,6 +4,7 @@ import { POSE_STYLES, styleDrawsHands } from "./poseStyles.js";
 import { SkeletonCanvas, isValidDrawOrder } from "./skeletonCanvas.js";
 import { initSidebar } from "./sidebar.js";
 import { POSE_PRESETS, buildPresetPose } from "./posePresets.js";
+import { createDefaultView, normalizeView, isDefaultView, mirrorView, DEPTH_ENDS, isHand } from "./poseView.js";
 import {
   SHORTCUTS,
   DRAG_MODES,
@@ -11,6 +12,7 @@ import {
   DEFAULT_POSE_STYLE,
   DISPLAY_DEFAULTS,
   HANDS,
+  VIEW,
 } from "./editorConfig.js";
 import {
   fetchImageModels,
@@ -55,6 +57,8 @@ let handDetail = HANDS.defaultDetail;
 let drawOrder = null;
 /// Pinned IK ends (hands/feet). Editor state, not part of the pose or undo history.
 let pins = [];
+/// Depth and camera (poseView.js). Editor state, like pins.
+let view = createDefaultView();
 
 // Load saved state from localStorage, if any
 const savedState = loadState();
@@ -81,6 +85,7 @@ if (savedState && savedState.pose && savedState.pose.joints) {
   if (Array.isArray(savedState.pins)) {
     pins = savedState.pins;
   }
+  view = normalizeView(savedState.view);
 }
 
 let history = [clonePose(pose)];
@@ -102,6 +107,7 @@ const skeleton = new SkeletonCanvas(poseCanvas, pose, {
   styleId,
   handDetail,
   drawOrder: drawOrder || undefined,
+  view,
   pins,
   onChange: (newPose) => {
     pose = newPose;
@@ -174,6 +180,25 @@ const sidebar = initSidebar({
   onPresetSelect: (id) => commitPose(buildPresetPose(id, pose)),
   onCopySide: (side) => commitPose(copySide(pose, side)),
   onUnpinAll: () => skeleton.clearPins(),
+  view: {
+    cameras: Object.entries(VIEW.cameras).map(([value, { label }]) => ({ value, label })),
+    sliders: [
+      { key: "headScale", label: "Head size", ...VIEW.head },
+      ...DEPTH_ENDS.map((key, i) => ({
+        key,
+        label: depthLabel(key),
+        ...VIEW.depth,
+        note: i === 0 ? "Hands and feet: + toward the camera, - away" : undefined,
+      })),
+    ],
+    onCameraChange: (camera) => setView({ ...view, camera }),
+    onSliderChange: (key, value) =>
+      setView(key === "headScale" ? { ...view, headScale: value } : { ...view, depth: { ...view.depth, [key]: value } }),
+    onReset: () => {
+      setView(createDefaultView());
+      showView();
+    },
+  },
 });
 
 updateUndoRedoState();
@@ -182,6 +207,7 @@ sidebar.setStyle(styleId);
 sidebar.setHandDetail(handDetail);
 restoreApiKey();
 sidebar.setPinCount(skeleton.getPins().length);
+showView({ open: !isDefaultView(view) });
 bindShortcuts();
 
 // Allow pasting an image from the clipboard as the reference image
@@ -228,6 +254,7 @@ function saveState() {
       handDetail,
       drawOrder,
       pins,
+      view,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
@@ -309,7 +336,26 @@ function setDragMode(mode) {
 }
 
 function handleMirror() {
+  setView(mirrorView(view));
+  showView();
   commitPose(mirrorPose(pose));
+}
+
+/// Slider label for a depth end, by the figure's side like the hand menu: "Right hand".
+function depthLabel(key) {
+  const side = key.endsWith("_r") ? "Right" : "Left";
+  return `${side} ${isHand(key) ? "hand" : "foot"}`;
+}
+
+function setView(next) {
+  view = next;
+  skeleton.setView(view);
+  saveState();
+}
+
+/// Show the current view in the panel (after a change not made there).
+function showView(options) {
+  sidebar.setView({ camera: view.camera, values: { headScale: view.headScale, ...view.depth } }, options);
 }
 
 /// Keyboard shortcuts from editorConfig.SHORTCUTS. Ignored while typing in a
@@ -405,6 +451,7 @@ async function handleGenerateImage() {
     const poseImageDataUrl = skeleton.toDataURL("image/png");
     const url = await generatePoseImage(currentImageDataUrl, pose, poseImageDataUrl, {
       includeHands: styleDrawsHands(styleId),
+      view,
     });
     if (url && resultImageEl) {
       resultImageEl.src = url;

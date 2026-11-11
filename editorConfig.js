@@ -50,6 +50,38 @@ export const HANDS = {
   contactDistance: 0.15,
 };
 
+/// Depth and camera (poseView.js): what a flat 2D skeleton cannot show. Every
+/// setting defaults to "off", which leaves the guide and the prompt exactly as
+/// without it. Set ones are drawn into the guide and spelled out in the prompt.
+export const VIEW = {
+  /// Camera height (the prompt wording is in aiService.js).
+  cameras: {
+    eye: { label: "Eye level" },
+    low: { label: "Low angle" },
+    high: { label: "High angle" },
+  },
+  defaultCamera: "eye",
+  /// Per hand / foot distance from the body plane: -1 far, 0 level, +1 toward the camera.
+  depth: { min: -1, max: 1, step: 0.1 },
+  /// Limbs are drawn thicker when near: width x 2^(gain x depth), so +1 doubles, -1 halves.
+  depthWidthGain: 1,
+  /// |depth| from which a hand or foot is mentioned in the prompt, and from which
+  /// it is described as thrust right at the camera.
+  depthNear: 0.3,
+  depthStrong: 0.7,
+  /// Head size as a multiple of a realistic adult head; above 1 the guide draws
+  /// a head outline and the prompt asks for that head-to-body ratio.
+  head: { min: 1, max: 2.5, step: 0.1 },
+  /// Realistic head radius as a fraction of the torso (neck to pelvis).
+  headRadiusToTorso: 0.22,
+  /// Head centre sits this many head radii from the neck toward the face.
+  headCenterFromNeck: 1.1,
+  /// Head outline colour (neutral, not an OpenPose limb colour) and its line
+  /// width as a fraction of the joint size.
+  headColor: "rgb(153, 153, 153)",
+  headLineToJoint: 0.5,
+};
+
 /// Pose rendering styles live in poseStyles.js; this picks the default.
 export const DEFAULT_POSE_STYLE = "coco18";
 

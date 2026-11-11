@@ -1,4 +1,6 @@
 import { FINGERS, fingerStates, handContact } from "./handPoses.js";
+import { DEPTH_ENDS, isDefaultView, isHand } from "./poseView.js";
+import { VIEW } from "./editorConfig.js";
 
 const API_TIMEOUT_MS = 60_000;
 
@@ -44,11 +46,10 @@ function getConfig() {
 /// foreshortening, so dramatic guides are not flattened back to the original
 /// eye-level view. The guide is an OpenPose skeleton (styles in poseStyles.js),
 /// optionally with finger keypoints; `handLines` (describeHands) spell the
-/// hand shapes out, since image models read finger keypoints poorly.
-function getPrompt(handLines = []) {
-  const handSection = handLines.length
-    ? "\n\nHAND SHAPES AND CONTACTS (read from IMAGE 1, follow exactly):\n" + handLines.map((l) => `- ${l}`).join("\n")
-    : "";
+/// hand shapes out, since image models read finger keypoints poorly, and
+/// `viewLines` (describeView) the depth and camera a 2D skeleton cannot show.
+function getPrompt(handLines = [], viewLines = []) {
+  const section = (title, lines) => (lines.length ? `\n\n${title}:\n` + lines.map((l) => `- ${l}`).join("\n") : "");
   return (
     "You are redrawing a reference image so its character takes the pose from a pose guide.\n\n" +
     "IMAGE 0 (CHARACTER AND STYLE REFERENCE):\n" +
@@ -67,7 +68,8 @@ function getPrompt(handLines = []) {
     "- Keep faces, hair, clothing, colors and body proportions consistent with IMAGE 0.\n" +
     "- Do NOT draw or overlay any rigs, joints, sticks, guides, or pose markers in the final result.\n" +
     "- The final image must look like a normal finished illustration or photo." +
-    handSection
+    section("HAND SHAPES AND CONTACTS (read from IMAGE 1, follow exactly)", handLines) +
+    section("CAMERA, DEPTH AND PROPORTIONS (follow exactly)", viewLines)
   );
 }
 
@@ -101,6 +103,51 @@ function describeHands(joints) {
       : "";
     return `The ${where} hand: ${shape}${touch}.`;
   });
+}
+
+/// Camera lines for describeView, by VIEW.cameras id (none at eye level).
+const CAMERA_PROMPTS = {
+  low: "Camera: low angle, looking up at the character from below (worm's-eye view): legs and feet closer and larger, head smaller and further away, strong perspective.",
+  high: "Camera: high angle, looking down at the character from above (bird's-eye view): head and shoulders closer and larger, legs shorter and further away, strong perspective.",
+};
+
+/// Depth wording per limb end, by how near it is (see VIEW.depthNear / depthStrong).
+const DEPTH_PROMPTS = {
+  hand: {
+    strong: "is thrust straight at the camera, very close to the viewer: draw it much larger than the rest of the body, with the forearm strongly foreshortened behind it",
+    near: "is closer to the camera than the body: draw it larger, with the arm foreshortened toward the viewer",
+    far: "is further from the camera, behind the body: draw it smaller, hidden behind the body where they overlap",
+  },
+  foot: {
+    strong: "points straight at the camera, very close to the viewer: draw it much larger than the rest of the body, showing the sole, with the leg strongly foreshortened behind it",
+    near: "is closer to the camera than the body: draw it larger, with the leg foreshortened toward the viewer",
+    far: "is further from the camera, behind the body: draw it smaller, hidden behind the body where they overlap",
+  },
+};
+
+/// Lines for the view (poseView.js): camera height, hands and feet set toward
+/// or away from the camera (named by image side, like describeHands), and a
+/// big head. Empty for the default view, so the prompt is then unchanged.
+function describeView(joints, view) {
+  if (!view || isDefaultView(view)) return [];
+  const lines = [];
+  if (CAMERA_PROMPTS[view.camera]) lines.push(CAMERA_PROMPTS[view.camera]);
+  const ends = DEPTH_ENDS.filter((k) => Math.abs(view.depth[k]) >= VIEW.depthNear).sort(
+    (a, b) => joints[a].x - joints[b].x
+  );
+  if (ends.length) lines.push("Limbs drawn thicker in IMAGE 1 are closer to the camera; thinner ones are further away.");
+  for (const key of ends) {
+    const z = view.depth[key];
+    const level = z >= VIEW.depthStrong ? "strong" : z > 0 ? "near" : "far";
+    const part = isHand(key) ? "hand" : "foot";
+    lines.push(`The ${imageSide(joints, key)} ${part} ${DEPTH_PROMPTS[part][level]}.`);
+  }
+  if (view.headScale > VIEW.head.min) {
+    lines.push(
+      `The character has a big head, about ${view.headScale.toFixed(1)} times a realistic adult head relative to the body, as outlined by the grey circle in IMAGE 1: keep that head-to-body ratio; do not shrink the head or lengthen the limbs. Do not draw the circle.`
+    );
+  }
+  return lines;
 }
 
 function normalizeBaseUrl(url) {
@@ -256,10 +303,10 @@ async function generateWithPollinations(imageDataUrl, poseImageDataUrl, prompt, 
 
 /// Re-draw an uploaded image so the main figure matches the given pose.
 /// `includeHands`: the guide shows finger keypoints, so the prompt also
-/// spells out each hand's shape.
-export async function generatePoseImage(imageDataUrl, pose, poseImageDataUrl, { includeHands = false } = {}) {
+/// spells out each hand's shape. `view`: depth and camera (poseView.js).
+export async function generatePoseImage(imageDataUrl, pose, poseImageDataUrl, { includeHands = false, view = null } = {}) {
   const config = getConfig();
-  const prompt = getPrompt(includeHands ? describeHands(pose.joints) : []);
+  const prompt = getPrompt(includeHands ? describeHands(pose.joints) : [], describeView(pose.joints, view));
   const provider = config.AI_PROVIDER || "pollinations";
 
   try {
