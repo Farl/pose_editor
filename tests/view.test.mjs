@@ -72,6 +72,33 @@ test("big head: outline above the neck, larger with the head size", () => {
   assert.ok(bigger.radius > head.radius);
 });
 
+test("head outline is not shrunk by a foreshortened torso", () => {
+  const { joints } = createDefaultPose();
+  const view = { ...createDefaultView(), headScale: 2 };
+  const head = headCircle(joints, view);
+  const short = { ...joints, pelvis: { x: joints.pelvis.x, y: joints.neck.y + 40 } };
+  assert.deepEqual(headCircle(short, view), head);
+});
+
+test("head outline encloses spread-out face points without counting them twice, and keeps its size in profile", () => {
+  const { joints } = createDefaultPose();
+  const view = { ...createDefaultView(), headScale: 1.5 };
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const faceKeys = ["nose", "eye_r", "eye_l", "ear_r", "ear_l"];
+  // A big face drawn into the skeleton (face points spread 3x around the nose).
+  const wide = { ...joints };
+  for (const k of faceKeys) {
+    wide[k] = { x: joints.nose.x + (joints[k].x - joints.nose.x) * 3, y: joints.nose.y + (joints[k].y - joints.nose.y) * 3 };
+  }
+  const head = headCircle(wide, view);
+  for (const k of faceKeys) assert.ok(dist(wide[k], head) < head.radius, k);
+  // The big face already sets the head size; headScale doesn't multiply it again.
+  assert.equal(headCircle(wide, { ...view, headScale: 1.1 }).radius, head.radius);
+  // Profile: both ears behind the nose. The head barely shrinks.
+  const profile = { ...joints, ear_r: { ...joints.ear_r }, ear_l: { ...joints.ear_r } };
+  assert.ok(headCircle(profile, view).radius > 0.9 * headCircle(joints, view).radius);
+});
+
 test("prompt names the camera, near and far limbs by image side, and the head size", async () => {
   const pose = createDefaultPose();
   const view = { ...createDefaultView(), camera: "low", headScale: 1.8 };
