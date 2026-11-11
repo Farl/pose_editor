@@ -128,10 +128,15 @@ const DEPTH_PROMPTS = {
 /// Lines for the view (poseView.js): camera height, hands and feet set toward
 /// or away from the camera (named by image side, like describeHands), and a
 /// big head. Empty for the default view, so the prompt is then unchanged.
-function describeView(joints, view) {
+function describeView(joints, view, depthMode = "2d") {
   if (!view || isDefaultView(view)) return [];
   const lines = [];
-  if (CAMERA_PROMPTS[view.camera]) lines.push(CAMERA_PROMPTS[view.camera]);
+  if (CAMERA_PROMPTS[view.camera]) {
+    const cameraText = depthMode === "3d"
+      ? `Camera: ${view.camera} angle relative to the figure.`
+      : CAMERA_PROMPTS[view.camera];
+    lines.push(cameraText);
+  }
   const ends = DEPTH_ENDS.filter((k) => Math.abs(view.depth[k]) >= VIEW.depthNear).sort(
     (a, b) => joints[a].x - joints[b].x
   );
@@ -140,7 +145,10 @@ function describeView(joints, view) {
     const z = view.depth[key];
     const level = z >= VIEW.depthStrong ? "strong" : z > 0 ? "near" : "far";
     const part = isHand(key) ? "hand" : "foot";
-    lines.push(`The ${imageSide(joints, key)} ${part} ${DEPTH_PROMPTS[part][level]}.`);
+    const description = depthMode === "3d"
+      ? (z > 0 ? "is closer to the camera than the torso" : "is farther from the camera than the torso")
+      : DEPTH_PROMPTS[part][level];
+    lines.push(`The ${imageSide(joints, key)} ${part} ${description}.`);
   }
   if (view.headScale > VIEW.head.min) {
     lines.push(
@@ -304,9 +312,9 @@ async function generateWithPollinations(imageDataUrl, poseImageDataUrl, prompt, 
 /// Re-draw an uploaded image so the main figure matches the given pose.
 /// `includeHands`: the guide shows finger keypoints, so the prompt also
 /// spells out each hand's shape. `view`: depth and camera (poseView.js).
-export async function generatePoseImage(imageDataUrl, pose, poseImageDataUrl, { includeHands = false, view = null } = {}) {
+export async function generatePoseImage(imageDataUrl, pose, poseImageDataUrl, { includeHands = false, view = null, depthMode = "2d" } = {}) {
   const config = getConfig();
-  const prompt = getPrompt(includeHands ? describeHands(pose.joints) : [], describeView(pose.joints, view));
+  const prompt = getPrompt(includeHands ? describeHands(pose.joints) : [], describeView(pose.joints, view, depthMode));
   const provider = config.AI_PROVIDER || "pollinations";
 
   try {
