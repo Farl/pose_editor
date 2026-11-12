@@ -4,7 +4,7 @@ const sub = (a, b) => a.map((v, i) => v - b[i]);
 const dot = (a, b) => a.reduce((sum, v, i) => sum + v * b[i], 0);
 const norm = (v) => Math.hypot(...v);
 const unit = (v) => v.map((n) => n / norm(v));
-const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 export function surfaceFrame(origin, longPoint, sidePoint) {
   const long = sub(longPoint, origin);
   const y = norm(long) > 1e-9 ? unit(long) : [0, 1, 0];

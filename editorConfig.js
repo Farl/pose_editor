@@ -50,6 +50,26 @@ export const HANDS = {
   contactDistance: 0.15,
 };
 
+/// Bending over (pose.js torsoBend): OpenPose has no waist keypoint and draws
+/// the torso as straight lines from the neck to the hips, so a bend reads as
+/// the torso leaning; it is spelled out in the AI prompt instead.
+export const TORSO = {
+  /// Angle (degrees) between the pelvis's up (perpendicular to the hips) and
+  /// the upper spine (waist to neck) from which the bend is mentioned. Above
+  /// the Run preset's forward lean, so ordinary posture stays unmentioned.
+  bendMin: 20,
+  /// Hips closer together than this fraction of the torso (neck to pelvis)
+  /// don't show which way the pelvis points; the lower spine is used instead.
+  minHipSpan: 0.2,
+  /// The prompt rounds the angle to this many degrees.
+  bendStep: 5,
+  /// The face counts as in profile, so a bend toward it is forward and away
+  /// from it backward, when the nose sits this far (as a fraction of the
+  /// neck-to-nose distance) to one side of the ears' midpoint. Otherwise the
+  /// figure faces the camera and the bend is sideways.
+  profileOffset: 0.35,
+};
+
 /// Depth and camera (poseView.js): what a flat 2D skeleton cannot show. Every
 /// setting defaults to "off", which leaves the guide and the prompt exactly as
 /// without it. Set ones are drawn into the guide and spelled out in the prompt.
@@ -106,6 +126,32 @@ export const PICKING = {
   doubleTapMs: 350,
 };
 
+/// Canvas pan and zoom (canvasViewport.js). On screen only: Download PNG and
+/// the AI pose guide always cover the whole canvas at CANVAS.size.
+///   desktop  wheel or trackpad pinch zooms around the pointer; drag empty
+///            space, or hold `panKey` and drag anywhere, to pan
+///   touch    two fingers pinch to zoom and pan; one finger still poses
+///   both     double-click / double-tap empty space (or `fitKey`) fits the
+///            canvas back in its frame
+export const VIEWPORT = {
+  /// Zoom range; 1 fits the whole canvas in its frame.
+  minZoom: 1,
+  maxZoom: 5,
+  /// Wheel zoom: factor e^(-rate x deltaY) per event, with deltaY in pixels.
+  wheelZoomRate: 0.002,
+  /// Pixels per wheel "line" (WheelEvent.deltaMode 1) and "page" (2).
+  wheelLinePx: 16,
+  wheelPagePx: 400,
+  /// A press on empty space that moves less than this (CSS px) is a tap; two
+  /// taps within PICKING.doubleTapMs fit the canvas.
+  tapSlopPx: 6,
+  /// Key (KeyboardEvent.key) held to pan by dragging, even over joints.
+  panKey: " ",
+  /// Pose layers get up to this many backing pixels per canvas unit, so a
+  /// zoomed-in skeleton stays sharp; each step costs memory.
+  maxRenderScale: 3,
+};
+
 /// How dragging a joint behaves. The mode is a sidebar toggle plus a one-key
 /// shortcut (`key`, added to SHORTCUTS below); it is saved with the editor state.
 ///   ik    hands/feet: the limb follows, elbow/knee keeps its bend side
@@ -141,6 +187,9 @@ export const OVERLAY = {
   /// styles) still get a hollow handle so they can be grabbed.
   handleColor: "rgba(255,255,255,0.7)",
   handleWidth: 1.5,
+  /// Smallest on-screen radius (CSS px) of those handles, so the waist stays
+  /// visible on a phone-sized canvas.
+  handleMinPx: 7,
 };
 
 /// Keyboard shortcuts. `mod` means Ctrl on Windows/Linux and Cmd on macOS.
@@ -153,6 +202,7 @@ export const SHORTCUTS = [
   { key: "r", mod: false, shift: false, action: "reset", label: "Reset pose" },
   { key: "m", mod: false, shift: false, action: "mirror", label: "Mirror" },
   { key: "p", mod: false, shift: false, action: "togglePin", label: "Pin hovered hand or foot" },
+  { key: "0", mod: false, shift: false, action: "fitCanvas", label: "Fit canvas" },
   ...Object.entries(DRAG_MODES).map(([id, { key, title }]) => ({
     key,
     mod: false,
@@ -167,4 +217,7 @@ export const SHORTCUTS = [
 export const GESTURES = [
   { input: "Double-click or double-tap", label: "Pin hand or foot" },
   { input: "Alt + drag", label: "Free move, once" },
+  { input: "Scroll or pinch", label: "Zoom" },
+  { input: "Drag empty space, or Space + drag", label: "Pan" },
+  { input: "Double-click empty space", label: "Fit canvas" },
 ];

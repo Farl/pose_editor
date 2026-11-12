@@ -1,4 +1,4 @@
-import { CANVAS_CENTER, HANDS } from "./editorConfig.js";
+import { CANVAS_CENTER, HANDS, TORSO } from "./editorConfig.js";
 import { FINGERS, FINGER_JOINTS, handKey, fingerKeys, placeHand } from "./handPoses.js";
 
 /// Posing rig: every joint the editor knows, independent of how a style draws
@@ -224,4 +224,62 @@ export function copySide(pose, fromSide) {
     copied.joints[dst] = reflectAcrossLine(copied.joints[src], pelvis, neck);
   }
   return copied;
+}
+
+const RAD = Math.PI / 180;
+const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
+const unit = (v) => {
+  const len = Math.hypot(v.x, v.y) || 1;
+  return { x: v.x / len, y: v.y / len };
+};
+
+/// Image direction closest to vector v: "image-left", "image-right", "image-top" or "image-bottom".
+function imageDirection(v) {
+  if (Math.abs(v.x) >= Math.abs(v.y)) return v.x < 0 ? "image-left" : "image-right";
+  return v.y < 0 ? "image-top" : "image-bottom";
+}
+
+/// Joints torsoBend reads.
+const TORSO_JOINTS = ["pelvis", "waist", "neck", "nose", "ear_r", "ear_l", "hip_r", "hip_l"];
+
+/// Which way the pelvis points up: perpendicular to the hip line, on the
+/// spine's side. Falls back to the lower spine (pelvis to waist) when the hips
+/// are too close together to tell (TORSO.minHipSpan), e.g. in profile.
+function pelvisUp(joints) {
+  const { pelvis, waist, neck, hip_r, hip_l } = joints;
+  const lower = unit(sub(waist, pelvis));
+  const hips = sub(hip_l, hip_r);
+  const torso = Math.hypot(neck.x - pelvis.x, neck.y - pelvis.y);
+  if (Math.hypot(hips.x, hips.y) < TORSO.minHipSpan * torso) return lower;
+  const up = unit({ x: hips.y, y: -hips.x });
+  return up.x * lower.x + up.y * lower.y >= 0 ? up : { x: -up.x, y: -up.y };
+}
+
+/// How far the upper body bends over the hips, or null below TORSO.bendMin.
+/// Covers both ways the rig bends: turning the whole spine at the pelvis
+/// (dragging the waist) and bending it at the waist (dragging the neck).
+///   degrees  angle between the pelvis's up (pelvisUp) and the upper spine
+///            (waist to neck)
+///   toward   image direction the upper body bends to (imageDirection)
+///   kind     "forward" or "backward" when the face is in profile and looks
+///            toward or away from the bend (TORSO.profileOffset), else "side"
+/// OpenPose styles draw the torso as straight lines from the neck to the hips,
+/// so a bend reads as the torso leaning; aiService puts it in the prompt. A
+/// face kept frontal reads as a sideways bend, as for a figure facing the camera.
+export function torsoBend(joints) {
+  // A 3D pose can have joints clipped out of frame (null): nothing to say then.
+  if (TORSO_JOINTS.some((k) => !joints[k])) return null;
+  const { waist, neck, nose, ear_r, ear_l } = joints;
+  const up = pelvisUp(joints);
+  const upper = unit(sub(neck, waist));
+  const cross = up.x * upper.y - up.y * upper.x;
+  const degrees = Math.abs(Math.atan2(cross, up.x * upper.x + up.y * upper.y)) / RAD;
+  if (degrees < TORSO.bendMin) return null;
+  // Perpendicular to the pelvis's up, on the side the upper body bends to.
+  const side = { x: -up.y * Math.sign(cross), y: up.x * Math.sign(cross) };
+  const ears = { x: (ear_r.x + ear_l.x) / 2, y: (ear_r.y + ear_l.y) / 2 };
+  const look = sub(nose, ears);
+  const offset = (look.x * side.x + look.y * side.y) / (Math.hypot(nose.x - neck.x, nose.y - neck.y) || 1);
+  const kind = offset >= TORSO.profileOffset ? "forward" : offset <= -TORSO.profileOffset ? "backward" : "side";
+  return { degrees, toward: imageDirection(side), kind };
 }
