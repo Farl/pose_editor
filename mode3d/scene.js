@@ -2,8 +2,10 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { JOINT_PARENT, JOINT_KEYS, IK_CHAINS, createDefaultPose, isFingerJoint } from "../pose.js";
-import { CANVAS } from "../editorConfig.js";
-import { FIGURE } from "./config.js";
+import { CANVAS, PICKING } from "../editorConfig.js";
+import { FIGURE, CONTROLS } from "./config.js";
+import { createAxisGizmo } from "./axisGizmo.js";
+import { boundingSphere, frameDistance, viewPosition } from "./views.js";
 import { buildPresetPose, POSE_PRESETS } from "../posePresets.js";
 import { projectPoint, cameraHeight, bodyPlaneDepth, depthRange, convexHull } from "./project.js";
 import { solveTwoBone } from "./ik.js";
@@ -12,9 +14,29 @@ import { semanticState as deriveSemantics } from "./semantics.js";
 import { loadBody } from "./model.js";
 import { serialize3dState } from "./state.js";
 
+/// Joints with a handle (plus finger joints when finger handles are on).
+const BODY_HANDLES = [
+  "pelvis",
+  "neck",
+  "nose",
+  ...["r", "l"].flatMap((s) => [`shoulder_${s}`, `elbow_${s}`, `wrist_${s}`, `hip_${s}`, `knee_${s}`, `ankle_${s}`]),
+];
+
 /// A self-authored articulated volumetric mannequin. Joint coordinates are
 /// world-space, and moving a joint carries its descendants; no external mesh or
 /// implied finger tracking is involved. Geometry is rebuilt from the rig.
+///
+/// Tools (TOOLS in editorConfig.js, set by setTool) work like the 2D ones:
+///   select  click a handle or the body to select the nearest joint; no gizmo
+///   ik      move: drag a handle across the screen, or the gizmo's axes. Hands
+///           and feet use IK, elbows and knees pick their bend side, the hips
+///           carry the body, and any other joint swings its bone (moveJoint)
+///   fk      rotate: the gizmo turns the joint's children around it
+///   depth   drag a handle up / down to bring it toward / away from the camera
+///   free    has no 3D meaning and acts as ik
+/// Camera: drag empty space (or Alt + drag anywhere) to orbit, right / middle
+/// drag or two fingers to pan, wheel or pinch to zoom; frame(), showView() and
+/// the corner axis gizmo move it.
 export async function createScene(host, onChange, initialState) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(1);
@@ -29,6 +51,10 @@ export async function createScene(host, onChange, initialState) {
   camera.position.fromArray(c.position);
   const orbit = new OrbitControls(camera, renderer.domElement);
   orbit.target.fromArray(c.target);
+  orbit.enableDamping = CONTROLS.damping > 0;
+  orbit.dampingFactor = CONTROLS.damping;
+  orbit.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
+  orbit.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
   const transform = new TransformControls(camera, renderer.domElement);
   scene.add(transform);
   transform.addEventListener("dragging-changed", (event) => {
@@ -43,7 +69,8 @@ export async function createScene(host, onChange, initialState) {
   const handles = new THREE.Group();
   scene.add(handles);
   const material = new THREE.MeshStandardMaterial({ color: 0xc6cbd2, roughness: 0.8 });
-  const handleMaterial = new THREE.MeshBasicMaterial({ color: 0x60b9eb });
+  const handleMaterial = new THREE.MeshBasicMaterial({ color: CONTROLS.handleColor });
+  const selectedMaterial = new THREE.MeshBasicMaterial({ color: CONTROLS.selectedColor });
   const sphere = new THREE.SphereGeometry(1, 18, 12);
   let showFingers = false;
   const positions = {};
@@ -166,83 +193,257 @@ export async function createScene(host, onChange, initialState) {
       }
     }
     skin?.sync(positions);
-    for (const key of [
-      "pelvis",
-      "neck",
-      "shoulder_r",
-      "elbow_r",
-      "wrist_r",
-      "shoulder_l",
-      "elbow_l",
-      "wrist_l",
-      "hip_r",
-      "knee_r",
-      "ankle_r",
-      "hip_l",
-      "knee_l",
-      "ankle_l",
-    ]) {
-      if (transform.mode === "translate" && key !== "pelvis" && !IK_CHAINS[key]) continue;
-      const handle = ellipsoid(positions[key], Array(3).fill(FIGURE.handleRadius), handles, handleMaterial);
+    const fingers = showFingers ? JOINT_KEYS.filter((key) => isFingerJoint(key) && !key.includes("4_")) : [];
+    for (const key of [...BODY_HANDLES, ...fingers]) {
+      const radius = isFingerJoint(key) ? FIGURE.fingerHandleRadius : FIGURE.handleRadius;
+      const mat = key === selection ? selectedMaterial : handleMaterial;
+      const handle = ellipsoid(positions[key], Array(3).fill(radius), handles, mat);
       handle.userData.key = key;
     }
-    if (showFingers && transform.mode === "rotate")
-      for (const key of JOINT_KEYS.filter((key) => isFingerJoint(key) && !key.includes("4_"))) {
-        const handle = ellipsoid(positions[key], Array(3).fill(FIGURE.fingerHandleRadius), handles, handleMaterial);
-        handle.userData.key = key;
-      }
   }
   const proxy = new THREE.Object3D();
   scene.add(proxy);
+  /// Current tool (TOOLS id) and selected joint (or null).
+  let tool = "ik";
   let selection = null,
     last = new THREE.Vector3(),
     lastRotation = new THREE.Quaternion();
+  const UP = new THREE.Vector3(0, 1, 0);
+
+  /// Gizmo mode per tool; tools without one show no gizmo.
+  const GIZMO_MODES = { ik: "translate", free: "translate", fk: "rotate" };
+
+  /// Put the gizmo proxy on the selected joint, turned to its bone (local
+  /// space: Y along the bone from its parent), and attach the gizmo if the
+  /// tool has one.
+  function placeProxy() {
+    transform.detach();
+    if (!selection) return;
+    proxy.position.copy(positions[selection]);
+    const parent = JOINT_PARENT[selection];
+    const bone = parent && positions[selection].clone().sub(positions[parent]);
+    if (bone && bone.lengthSq() > 0) proxy.quaternion.setFromUnitVectors(UP, bone.normalize());
+    else proxy.quaternion.identity();
+    last.copy(proxy.position);
+    lastRotation.copy(proxy.quaternion);
+    const mode = GIZMO_MODES[tool];
+    if (mode) {
+      transform.setMode(mode);
+      transform.attach(proxy);
+    }
+  }
+
+  function select(key) {
+    selection = key;
+    placeProxy();
+    rebuild();
+  }
+
+  /// Move joint `key` toward world point `target`, keeping bone lengths:
+  ///   pelvis       the whole body follows
+  ///   hand / foot  two-bone IK from the shoulder / hip
+  ///   elbow / knee bends its limb toward the target; hand / foot stay put
+  ///   any other    its bone swings from the parent to point at the target
+  function moveJoint(key, target) {
+    if (key === "pelvis") {
+      const delta = target.clone().sub(positions[key]);
+      for (const k of JOINT_KEYS) positions[k].add(delta);
+      return;
+    }
+    const chain = IK_CHAINS[key];
+    const limb = Object.values(IK_CHAINS).find(([, mid]) => mid === key);
+    if (chain) {
+      const [root, mid, end] = chain;
+      const result = solveTwoBone(positions[root].toArray(), positions[mid].toArray(), positions[end].toArray(), target.toArray());
+      const endDelta = new THREE.Vector3().fromArray(result.end).sub(positions[end]);
+      positions[mid].fromArray(result.mid);
+      for (const k of descendants(end)) positions[k].add(endDelta);
+    } else if (limb) {
+      const [root, , end] = limb;
+      // The target stands in for the elbow / knee as the bend-side hint.
+      const result = solveTwoBone(positions[root].toArray(), target.toArray(), positions[end].toArray(), positions[end].toArray());
+      positions[key].fromArray(result.mid);
+    } else {
+      const pivot = positions[JOINT_PARENT[key]].clone();
+      const from = positions[key].clone().sub(pivot);
+      const to = target.clone().sub(pivot);
+      if (from.lengthSq() === 0 || to.lengthSq() === 0) return;
+      const turn = new THREE.Quaternion().setFromUnitVectors(from.normalize(), to.normalize());
+      for (const k of descendants(key)) positions[k].sub(pivot).applyQuaternion(turn).add(pivot);
+    }
+  }
+
   transform.addEventListener("objectChange", () => {
     if (!selection) return;
-    const delta = proxy.position.clone().sub(last);
-    last.copy(proxy.position);
-    const chain = IK_CHAINS[selection];
     if (transform.mode === "rotate") {
       const rotation = proxy.quaternion.clone().multiply(lastRotation.clone().invert());
       lastRotation.copy(proxy.quaternion);
       for (const key of descendants(selection)) {
         if (key !== selection) positions[key].sub(proxy.position).applyQuaternion(rotation).add(proxy.position);
       }
-    } else if (chain) {
-      const [root, mid, end] = chain;
-      const result = solveTwoBone(
-        positions[root].toArray(),
-        positions[mid].toArray(),
-        positions[end].toArray(),
-        proxy.position.toArray(),
-      );
-      const endDelta = new THREE.Vector3().fromArray(result.end).sub(positions[end]);
-      positions[mid].fromArray(result.mid);
-      for (const key of descendants(end)) positions[key].add(endDelta);
     } else {
-      for (const key of descendants(selection)) positions[key].add(delta);
+      moveJoint(selection, proxy.position);
     }
     rebuild();
     onChange();
   });
+  // A constrained move can leave the joint short of the gizmo: put it back.
+  transform.addEventListener("mouseUp", placeProxy);
+
   const raycaster = new THREE.Raycaster(),
     pointer = new THREE.Vector2();
-  renderer.domElement.addEventListener("pointerdown", (event) => {
-    const rect = renderer.domElement.getBoundingClientRect();
+  const dom = renderer.domElement;
+  function aim(event) {
+    const rect = dom.getBoundingClientRect();
     pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, 1 - ((event.clientY - rect.top) / rect.height) * 2);
     raycaster.setFromCamera(pointer, camera);
-    const hit = raycaster.intersectObjects(handles.children)[0];
-    if (!hit) return;
-    selection = hit.object.userData.key;
-    proxy.position.copy(positions[selection]);
-    last.copy(proxy.position);
-    proxy.quaternion.identity();
-    lastRotation.identity();
-    transform.attach(proxy);
+  }
+  /// Handle under the pointer: the one nearest it on screen within the 2D
+  /// pick radius for this pointer type (PICKING.radiusPx), nearer the camera
+  /// on a tie; its joint key, or null.
+  function pickHandle(event) {
+    aim(event);
+    const rect = dom.getBoundingClientRect();
+    const radius = PICKING.radiusPx[event.pointerType] ?? PICKING.radiusPx.mouse;
+    let best = null,
+      bestScore = Infinity;
+    for (const handle of handles.children) {
+      const key = handle.userData.key;
+      const p = positions[key].clone().project(camera);
+      if (p.z > 1) continue;
+      const px = Math.hypot(((p.x - pointer.x) / 2) * rect.width, ((p.y - pointer.y) / 2) * rect.height);
+      const score = px + p.z;
+      if (px <= radius && score < bestScore) {
+        best = key;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+  /// Body under the pointer: the handle joint nearest the hit, or null.
+  function pickBody(event) {
+    aim(event);
+    const meshes = skin ? skin.meshes : body.children;
+    // A posed skinned mesh's cached bounds are stale; recompute them.
+    for (const mesh of meshes) if (mesh.isSkinnedMesh) mesh.boundingSphere = null;
+    const hit = raycaster.intersectObjects(meshes, false)[0];
+    if (!hit) return null;
+    const keys = handles.children.map((h) => h.userData.key);
+    return keys.reduce((best, k) => (positions[k].distanceTo(hit.point) < positions[best].distanceTo(hit.point) ? k : best));
+  }
+
+  /// Pointer press on the canvas, before OrbitControls / TransformControls see
+  /// it (capture phase), or null:
+  ///   { pointerId, x, y, moved, key, drag }
+  /// `key` is the handle it grabbed (selected at once; the orbit is off until
+  /// release). `drag`, for tools that drag handles directly:
+  ///   { key, plane, offset }        ik: the joint follows the pointer across the screen
+  ///   { key, start, toCamera, y, perPx }  depth: up / down moves it along the view axis
+  let press = null;
+  dom.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (press || event.button !== 0 || transform.axis || transform.dragging) return;
+      const key = event.altKey ? null : pickHandle(event);
+      press = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false, key, drag: null };
+      if (!key) return;
+      select(key);
+      orbit.enabled = false;
+      if (tool === "depth") {
+        const rect = dom.getBoundingClientRect();
+        const distance = camera.position.distanceTo(positions[key]);
+        const spanPerPx = (2 * distance * Math.tan((camera.fov * Math.PI) / 360)) / rect.height;
+        const start = positions[key].clone();
+        const toCamera = camera.position.clone().sub(start).normalize();
+        press.drag = { key, start, toCamera, y: event.clientY, perPx: spanPerPx * CONTROLS.depthDragGain };
+      } else if (GIZMO_MODES[tool] === "translate") {
+        const normal = camera.getWorldDirection(new THREE.Vector3());
+        const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, positions[key]);
+        const hit = raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+        press.drag = { key, plane, offset: hit ? positions[key].clone().sub(hit) : new THREE.Vector3() };
+      }
+    },
+    true,
+  );
+  dom.addEventListener("pointermove", (event) => {
+    if (!press || event.pointerId !== press.pointerId) return;
+    if (Math.hypot(event.clientX - press.x, event.clientY - press.y) >= CONTROLS.tapSlopPx) press.moved = true;
+    const drag = press.drag;
+    if (!drag || !press.moved) return;
+    if (drag.plane) {
+      aim(event);
+      const hit = raycaster.ray.intersectPlane(drag.plane, new THREE.Vector3());
+      if (!hit) return;
+      moveJoint(drag.key, hit.add(drag.offset));
+    } else {
+      moveJoint(drag.key, drag.start.clone().addScaledVector(drag.toCamera, (drag.y - event.clientY) * drag.perPx));
+    }
+    placeProxy();
+    rebuild();
   });
+  const release = (event) => {
+    if (!press || event.pointerId !== press.pointerId) return;
+    const { moved, key, drag } = press;
+    press = null;
+    orbit.enabled = true;
+    if (drag && moved) onChange();
+    // A click on the body (not an orbit) selects the part under it; a click
+    // on empty space clears the selection.
+    if (!key && !moved && event.type === "pointerup") select(pickBody(event));
+  };
+  dom.addEventListener("pointerup", release);
+  dom.addEventListener("pointercancel", release);
+
+  /// Camera move in progress: { from: {position, target}, to: {...}, start }.
+  let transition = null;
+  function moveCamera(position, target) {
+    transition = {
+      from: { position: camera.position.clone(), target: orbit.target.clone() },
+      to: { position, target },
+      start: performance.now(),
+    };
+  }
+  function stepTransition() {
+    if (!transition) return;
+    const t = Math.min(1, (performance.now() - transition.start) / CONTROLS.transitionMs);
+    const ease = t * t * (3 - 2 * t);
+    camera.position.lerpVectors(transition.from.position, transition.to.position, ease);
+    orbit.target.lerpVectors(transition.from.target, transition.to.target, ease);
+    if (t === 1) {
+      transition = null;
+      onChange();
+    }
+  }
+
+  /// Fit the selected joint and what it carries in view (the whole figure
+  /// with no selection, or when `all`), keeping the viewing direction.
+  function frame(all = false) {
+    const keys = selection && !all ? descendants(selection) : JOINT_KEYS;
+    const { center, radius } = boundingSphere(
+      keys.map((k) => positions[k].toArray()),
+      CONTROLS.frameMinRadius,
+    );
+    const direction = camera.position.clone().sub(orbit.target).normalize().toArray();
+    const distance = frameDistance(radius, camera.fov, CONTROLS.framePad);
+    moveCamera(new THREE.Vector3(...viewPosition(center, direction, distance)), new THREE.Vector3(...center));
+  }
+
+  /// Look from a CONTROLS.views id or a direction ([x, y, z] toward the
+  /// camera) at the same target and distance.
+  function showView(view) {
+    const direction = typeof view === "string" ? CONTROLS.views[view] : view;
+    if (!direction) return;
+    const target = orbit.target.toArray();
+    const position = viewPosition(target, direction, camera.position.distanceTo(orbit.target), CONTROLS.verticalLean);
+    moveCamera(new THREE.Vector3(...position), orbit.target.clone());
+  }
+
+  const gizmo = createAxisGizmo(host, showView);
   function render() {
+    stepTransition();
     orbit.update();
     renderer.render(scene, camera);
+    gizmo.update(camera);
   }
   let raf = null;
   function animate() {
@@ -365,8 +566,8 @@ export async function createScene(host, onChange, initialState) {
       const p = preset[key];
       positions[key].set((p.x - CANVAS.size / 2) * FIGURE.scale, (CANVAS.size / 2 - p.y) * FIGURE.scale, 0);
     }
-    transform.detach();
     selection = null;
+    placeProxy();
     rebuild();
     onChange();
   }
@@ -420,11 +621,15 @@ export async function createScene(host, onChange, initialState) {
     camera.updateProjectionMatrix();
     onChange();
   }
-  function setMode(mode) {
-    transform.detach();
-    selection = null;
-    transform.setMode(mode);
-    rebuild();
+  /// A TOOLS id; the selection stays, with the gizmo for the new tool.
+  function setTool(id) {
+    tool = id;
+    placeProxy();
+  }
+  /// Gizmo axes: "world" or "local" (along the selected bone). Returns the new space.
+  function toggleSpace() {
+    transform.setSpace(transform.space === "world" ? "local" : "world");
+    return transform.space;
   }
   function setFingerHandles(visible) {
     showFingers = visible;
@@ -445,7 +650,10 @@ export async function createScene(host, onChange, initialState) {
     depthPNG,
     reset,
     applyPreset,
-    setMode,
+    setTool,
+    toggleSpace,
+    frame,
+    showView,
     setFov,
     setFingerHandles,
     setActive,

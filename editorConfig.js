@@ -171,14 +171,15 @@ export const VIEWPORT = {
 ///   depth   drag up to bring the joint toward the camera, down to push it
 ///           away (VIEW.depth, VIEW.depthDrag); a finger sets its whole hand
 ///   free    only the grabbed joint moves; bone lengths may change, which is
-///           how foreshortening (perspective) is drawn
+///           how foreshortening (perspective) is drawn. 2D only (`scope`)
 /// In ik/fk the hips move the whole body and head, neck and shoulders rotate.
+/// The 3D view (mode3d/scene.js) gives the same tools their 3D meaning.
 export const TOOLS = {
   select: { title: "Select", key: "q" },
   ik: { title: "Move (IK)", key: "w" },
   fk: { title: "Rotate (FK)", key: "e" },
   depth: { title: "Depth", key: "r" },
-  free: { title: "Free move", key: "g" },
+  free: { title: "Free move", key: "g", scope: "2d" },
 };
 
 export const DEFAULT_TOOL = "ik";
@@ -220,20 +221,26 @@ export const OVERLAY = {
 
 /// Keyboard shortcuts. `mod` means Ctrl on Windows/Linux and Cmd on macOS.
 /// `action` names map to handlers in main.js; `arg` is passed to the handler.
-/// `label` names the command in tooltips and the shortcuts panel.
+/// `label` names the command in tooltips and the shortcuts panel. `scope`
+/// limits a shortcut to the "2d" or "3d" editor; without it, it works in both.
 export const SHORTCUTS = [
-  { key: "z", mod: true, shift: false, action: "undo", label: "Undo" },
-  { key: "z", mod: true, shift: true, action: "redo", label: "Redo" },
-  { key: "y", mod: true, shift: false, action: "redo", label: "Redo" },
-  { key: "r", mod: false, shift: true, action: "reset", label: "Reset pose" },
-  { key: "m", mod: false, shift: false, action: "mirror", label: "Mirror" },
-  { key: "p", mod: false, shift: false, action: "togglePin", label: "Pin hovered hand or foot" },
-  { key: "0", mod: false, shift: false, action: "fitCanvas", label: "Fit canvas" },
+  { key: "z", mod: true, shift: false, action: "undo", label: "Undo", scope: "2d" },
+  { key: "z", mod: true, shift: true, action: "redo", label: "Redo", scope: "2d" },
+  { key: "y", mod: true, shift: false, action: "redo", label: "Redo", scope: "2d" },
+  { key: "r", mod: false, shift: true, action: "reset", label: "Reset pose", scope: "2d" },
+  { key: "m", mod: false, shift: false, action: "mirror", label: "Mirror", scope: "2d" },
+  { key: "p", mod: false, shift: false, action: "togglePin", label: "Pin hovered hand or foot", scope: "2d" },
+  { key: "0", mod: false, shift: false, action: "fitCanvas", label: "Fit canvas or figure" },
   { key: "f", mod: false, shift: false, action: "frameSelection", label: "Frame selected joint" },
-  ...Object.entries(TOOLS).map(([id, { key, title }]) => ({
+  { key: "1", mod: false, shift: false, action: "view3d", arg: "front", label: "3D front view", scope: "3d" },
+  { key: "2", mod: false, shift: false, action: "view3d", arg: "side", label: "3D side view", scope: "3d" },
+  { key: "3", mod: false, shift: false, action: "view3d", arg: "top", label: "3D top view", scope: "3d" },
+  { key: "x", mod: false, shift: false, action: "toggleSpace", label: "3D gizmo: world or local axes", scope: "3d" },
+  ...Object.entries(TOOLS).map(([id, { key, title, scope }]) => ({
     key,
     mod: false,
     shift: false,
+    scope,
     action: "tool",
     arg: id,
     label: title,
@@ -248,4 +255,7 @@ export const GESTURES = [
   { input: "Scroll or pinch", label: "Zoom" },
   { input: "Drag empty space, or Space + drag", label: "Pan" },
   { input: "Double-click empty space", label: "Fit canvas" },
+  { input: "Drag empty space, or Alt + drag", label: "3D orbit" },
+  { input: "Right- or middle-drag, or two fingers", label: "3D pan" },
+  { input: "Click a joint or the body", label: "3D select" },
 ];

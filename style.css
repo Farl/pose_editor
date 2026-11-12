@@ -552,7 +552,31 @@ input[type="range"] {
 }
 
 /* The 3D surface occupies the same square framing as the 2D canvas. */
-#scene3d { width: 100%; aspect-ratio: 1; }
+#scene3d { position: relative; width: 100%; aspect-ratio: 1; }
+
+/* 2D-only tools (TOOLS scope) leave the shelf in 3D. */
+.app[data-mode="3d"] .tool-shelf [data-tool="free"] { display: none; }
+
+/* Corner axis gizmo (mode3d/axisGizmo.js): world axes as the camera sees them;
+   click an end to look from that side. */
+.axis-gizmo {
+  position: absolute;
+  top: var(--gap);
+  right: var(--gap);
+  z-index: 3;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  overflow: visible;
+}
+.axis-gizmo line { stroke-width: 2; }
+.axis-gizmo-end { cursor: pointer; }
+.axis-gizmo text {
+  fill: var(--bg);
+  font: 600 10px var(--font);
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
 #scene3d[hidden] { display: none; }
 #scene3d canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 
