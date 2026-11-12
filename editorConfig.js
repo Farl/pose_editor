@@ -50,6 +50,26 @@ export const HANDS = {
   contactDistance: 0.15,
 };
 
+/// Bending over (pose.js torsoBend): OpenPose has no waist keypoint and draws
+/// the torso as straight lines from the neck to the hips, so a bend reads as
+/// the torso leaning; it is spelled out in the AI prompt instead.
+export const TORSO = {
+  /// Angle (degrees) between the pelvis's up (perpendicular to the hips) and
+  /// the upper spine (waist to neck) from which the bend is mentioned. Above
+  /// the Run preset's forward lean, so ordinary posture stays unmentioned.
+  bendMin: 20,
+  /// Hips closer together than this fraction of the torso (neck to pelvis)
+  /// don't show which way the pelvis points; the lower spine is used instead.
+  minHipSpan: 0.2,
+  /// The prompt rounds the angle to this many degrees.
+  bendStep: 5,
+  /// The face counts as in profile, so a bend toward it is forward and away
+  /// from it backward, when the nose sits this far (as a fraction of the
+  /// neck-to-nose distance) to one side of the ears' midpoint. Otherwise the
+  /// figure faces the camera and the bend is sideways.
+  profileOffset: 0.35,
+};
+
 /// Depth and camera (poseView.js): what a flat 2D skeleton cannot show. Every
 /// setting defaults to "off", which leaves the guide and the prompt exactly as
 /// without it. Set ones are drawn into the guide and spelled out in the prompt.

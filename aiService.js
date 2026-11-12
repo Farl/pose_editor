@@ -1,6 +1,7 @@
 import { FINGERS, fingerStates, handContact } from "./handPoses.js";
 import { DEPTH_ENDS, isDefaultView, isHand } from "./poseView.js";
-import { VIEW } from "./editorConfig.js";
+import { VIEW, TORSO } from "./editorConfig.js";
+import { torsoBend } from "./pose.js";
 
 const API_TIMEOUT_MS = 60_000;
 
@@ -47,8 +48,10 @@ function getConfig() {
 /// eye-level view. The guide is an OpenPose skeleton (styles in poseStyles.js),
 /// optionally with finger keypoints; `handLines` (describeHands) spell the
 /// hand shapes out, since image models read finger keypoints poorly, and
-/// `viewLines` (describeView) the depth and camera a 2D skeleton cannot show.
-function getPrompt(handLines = [], viewLines = []) {
+/// `viewLines` (describeView) the depth and camera a 2D skeleton cannot show,
+/// and `torsoLines` (describeTorso) a bend at the waist, which OpenPose has no
+/// keypoint for.
+function getPrompt(handLines = [], viewLines = [], torsoLines = []) {
   const section = (title, lines) => (lines.length ? `\n\n${title}:\n` + lines.map((l) => `- ${l}`).join("\n") : "");
   return (
     "You are redrawing a reference image so its character takes the pose from a pose guide.\n\n" +
@@ -68,6 +71,7 @@ function getPrompt(handLines = [], viewLines = []) {
     "- Keep faces, hair, clothing, colors and body proportions consistent with IMAGE 0.\n" +
     "- Do NOT draw or overlay any rigs, joints, sticks, guides, or pose markers in the final result.\n" +
     "- The final image must look like a normal finished illustration or photo." +
+    section("TORSO (follow exactly)", torsoLines) +
     section("HAND SHAPES AND CONTACTS (read from IMAGE 1, follow exactly)", handLines) +
     section("CAMERA, DEPTH AND PROPORTIONS (follow exactly)", viewLines)
   );
@@ -103,6 +107,25 @@ function describeHands(joints) {
       : "";
     return `The ${where} hand: ${shape}${touch}.`;
   });
+}
+
+/// Waist bend wording per torsoBend kind.
+const TORSO_PROMPTS = {
+  forward: "bends forward at the waist",
+  backward: "arches backward at the waist",
+  side: "bends sideways at the waist",
+};
+
+/// One line for a bend at the waist (pose.js torsoBend), or none. The guide
+/// draws the torso as straight lines from the neck to the hips, so without
+/// this a bend reads as the whole torso leaning.
+function describeTorso(joints) {
+  const bend = torsoBend(joints);
+  if (!bend) return [];
+  const degrees = Math.round(bend.degrees / TORSO.bendStep) * TORSO.bendStep;
+  return [
+    `The upper body ${TORSO_PROMPTS[bend.kind]}, toward ${bend.toward}, by about ${degrees} degrees: keep the hips where IMAGE 1 puts them and bend the spine between the hips and the chest so the chest, shoulders and head follow IMAGE 1. Draw a clear bend at the waist, not a straight torso tilted as one piece.`,
+  ];
 }
 
 /// Camera lines for describeView, by VIEW.cameras id (none at eye level).
@@ -306,7 +329,11 @@ async function generateWithPollinations(imageDataUrl, poseImageDataUrl, prompt, 
 /// spells out each hand's shape. `view`: depth and camera (poseView.js).
 export async function generatePoseImage(imageDataUrl, pose, poseImageDataUrl, { includeHands = false, view = null } = {}) {
   const config = getConfig();
-  const prompt = getPrompt(includeHands ? describeHands(pose.joints) : [], describeView(pose.joints, view));
+  const prompt = getPrompt(
+    includeHands ? describeHands(pose.joints) : [],
+    describeView(pose.joints, view),
+    describeTorso(pose.joints)
+  );
   const provider = config.AI_PROVIDER || "pollinations";
 
   try {
