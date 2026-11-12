@@ -90,6 +90,9 @@ export class SkeletonCanvas {
     this.handDetail = handDetail;
     /// Depth and camera (poseView.js).
     this.view = view;
+    /// Head outline traced from a 3D model ([{x, y}, ...]), or null for the
+    /// circle from the view (setHeadOutline).
+    this.headOutline = null;
     /// Rig joints the current style draws (set by draw()).
     this.drawnJoints = new Set();
     this.pins = new Set(pins.filter(isPinnable));
@@ -141,6 +144,13 @@ export class SkeletonCanvas {
   /// Depth and camera view (poseView.js).
   setView(view) {
     this.view = view;
+    this.draw();
+  }
+
+  /// Head outline as a polygon in canvas units (3D mode traces it from the
+  /// model's head), drawn in place of the view's circle; null to go back.
+  setHeadOutline(points) {
+    this.headOutline = points && points.length >= 3 ? points : null;
     this.draw();
   }
 
@@ -474,15 +484,23 @@ export class SkeletonCanvas {
     ctx.fill();
   }
 
-  /// Head outline for a big-headed view (headCircle), under the skeleton.
+  /// Head outline under the skeleton: the traced polygon (setHeadOutline),
+  /// else the circle for a big-headed view (headCircle).
   _drawHead(ctx) {
-    const head = headCircle(this.pose.joints, this.view);
-    if (!head) return;
+    const head = this.headOutline ? null : headCircle(this.pose.joints, this.view);
+    if (!this.headOutline && !head) return;
     ctx.save();
     ctx.strokeStyle = VIEW.headColor;
     ctx.lineWidth = this.jointRadius * VIEW.headLineToJoint;
     ctx.beginPath();
-    ctx.arc(head.x, head.y, head.radius, 0, Math.PI * 2);
+    if (head) {
+      ctx.arc(head.x, head.y, head.radius, 0, Math.PI * 2);
+    } else {
+      const [first, ...rest] = this.headOutline;
+      ctx.moveTo(first.x, first.y);
+      for (const p of rest) ctx.lineTo(p.x, p.y);
+      ctx.closePath();
+    }
     ctx.stroke();
     ctx.restore();
   }

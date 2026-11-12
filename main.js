@@ -25,6 +25,12 @@ import {
 } from "./aiService.js";
 
 const STORAGE_KEY = "poseEditorState_v1";
+const MODE3D_STORAGE_KEY = "poseEditor3d_v1";
+let scene3d = null;
+let mode3d = false;
+let guide3d = null;
+let render3dGuide = null;
+
 
 const poseCanvas = document.getElementById("poseCanvas");
 const resultImageEl = document.getElementById("resultImage");
@@ -241,6 +247,103 @@ sidebar.setRangeValue("jointSizeInput", jointRadius);
 sidebar.setRangeValue("linkScaleInput", linkScale);
 initImageModelPicker();
 
+/// 3D is loaded only on request; the 2D pose and history remain untouched.
+const sceneHost = document.getElementById("scene3d");
+const mode2dButton = document.getElementById("mode2dBtn");
+const mode3dButton = document.getElementById("mode3dBtn");
+const depthButton = document.getElementById("depth3dBtn");
+const reset3dButton = document.getElementById("reset3dBtn");
+const frame = poseCanvas.parentElement;
+function save3d() {
+  if (scene3d) localStorage.setItem(MODE3D_STORAGE_KEY, JSON.stringify(scene3d.state()));
+}
+async function set3d(enabled) {
+  if (enabled && !scene3d) {
+    try {
+      const { createScene } = await import("./mode3d/scene.js");
+      ({ render3dGuide } = await import("./mode3d/guide.js"));
+      const { FIGURE } = await import("./mode3d/config.js");
+      const input = document.getElementById("fov3dInput");
+      input.min = FIGURE.camera.minFov; input.max = FIGURE.camera.maxFov; input.step = FIGURE.camera.fovStep;
+      const raw = localStorage.getItem(MODE3D_STORAGE_KEY);
+      let saved = null; try { saved = raw && JSON.parse(raw); } catch { /* Ignore invalid saved 3D state. */ }
+      scene3d = await createScene(sceneHost, save3d, saved);
+      const container = document.createElement("div");
+      container.style.cssText = "position:fixed;left:-10000px;top:0";
+      const canvas = document.createElement("canvas"); container.appendChild(canvas); document.body.appendChild(container);
+      guide3d = new SkeletonCanvas(canvas, { joints: scene3d.project() }, { styleId: "body25hands", jointRadius, minorAxisScale: linkScale });
+    } catch (error) { setAiStatus(`Could not load 3D mode: ${error.message}`); return; }
+  }
+  mode3d = enabled;
+  viewport.setEnabled(!enabled);
+  const exportsHost = enabled ? document.getElementById('controls3dPanel') : document.querySelector('.tool-group-end');
+  exportsHost.appendChild(document.getElementById('downloadBtn'));
+  document.querySelector('.tool-group-end').hidden = enabled;
+  document.getElementById("controls3dPanel").hidden = !enabled;
+  if (scene3d) scene3d.setActive(enabled);
+  document.getElementById("app").dataset.mode = enabled ? "3d" : "2d";
+  sceneHost.hidden = !enabled;
+  frame.querySelectorAll("#poseCanvas, .pose-grid, .pose-overlay").forEach((el) => { el.hidden = enabled; });
+  depthButton.hidden = !enabled;
+  document.getElementById("fov3dRow").hidden = !enabled;
+  if (enabled) {
+    const input = document.getElementById("fov3dInput"); input.value = scene3d.state().camera.fov;
+    input.nextElementSibling.textContent = input.value;
+  }
+  document.getElementById("state3dBtn").hidden = !enabled;
+  reset3dButton.hidden = !enabled;
+  document.getElementById("finger3dBtn").hidden = !enabled;
+  document.getElementById("preset3dSelect").hidden = !enabled;
+  document.getElementById("transform3dGroup").hidden = !enabled;
+  document.querySelectorAll("#dragModeGroup, #undoBtn, #redoBtn, #resetBtn, #pose2dPanel, #viewPanel").forEach((el) => { el.hidden = enabled; });
+  document.querySelectorAll("#styleSelect, #handDetailGroup, #handDetailLabel").forEach((el) => { el.hidden = enabled; });
+  mode2dButton.setAttribute("aria-pressed", String(!enabled));
+  mode3dButton.setAttribute("aria-pressed", String(enabled));
+  setAiStatus(enabled ? (scene3d.modelError || "Move hands, feet or hips; rotate joints to pose. Orbit by dragging empty space. Hidden joints remain in the guide.") : "");
+}
+mode2dButton.addEventListener("click", () => set3d(false));
+mode3dButton.addEventListener("click", () => set3d(true));
+depthButton.addEventListener("click", () => downloadData(scene3d.depthPNG(), "depth"));
+document.getElementById("state3dBtn").addEventListener("click", () => {
+  const blob = new Blob([JSON.stringify(scene3d.state(), null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob); const link = document.createElement("a");
+  link.href = url; link.download = `pose-3d-${Date.now()}.json`; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+reset3dButton.addEventListener("click", () => {
+  scene3d.reset(); const input = document.getElementById("fov3dInput");
+  input.value = scene3d.state().camera.fov; input.nextElementSibling.textContent = input.value;
+});
+document.getElementById("fov3dInput").addEventListener("input", (event) => {
+  scene3d.setFov(event.target.value); event.target.nextElementSibling.textContent = event.target.value;
+});
+const preset3dSelect = document.getElementById("preset3dSelect");
+const presetPlaceholder = document.createElement("option");
+presetPlaceholder.value = ""; presetPlaceholder.textContent = "3D preset"; preset3dSelect.appendChild(presetPlaceholder);
+for (const [id, preset] of Object.entries(POSE_PRESETS)) {
+  const option = document.createElement("option"); option.value = id; option.textContent = preset.label; preset3dSelect.appendChild(option);
+}
+preset3dSelect.addEventListener("change", () => { if (preset3dSelect.value) scene3d.applyPreset(preset3dSelect.value); preset3dSelect.value = ""; });
+document.getElementById("finger3dBtn").addEventListener("click", (event) => {
+  const enabled = event.currentTarget.getAttribute("aria-pressed") !== "true";
+  event.currentTarget.setAttribute("aria-pressed", String(enabled)); scene3d.setFingerHandles(enabled);
+});
+for (const [id, mode] of [["move3dBtn", "translate"], ["rotate3dBtn", "rotate"]]) {
+  document.getElementById(id).addEventListener("click", () => {
+    scene3d.setMode(mode);
+    document.getElementById("move3dBtn").setAttribute("aria-pressed", String(mode === "translate"));
+    document.getElementById("rotate3dBtn").setAttribute("aria-pressed", String(mode === "rotate"));
+  });
+}
+function current3dGuide() {
+  return render3dGuide(scene3d, guide3d, jointRadius, linkScale);
+}
+function downloadData(url, name) {
+  const link = document.createElement("a"); link.download = `${name}-${Date.now()}.png`; link.href = url;
+  document.body.appendChild(link); link.click(); link.remove();
+}
+
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -380,7 +483,7 @@ function bindShortcuts() {
   };
 
   window.addEventListener("keydown", (e) => {
-    if (e.target.closest && e.target.closest("input, select, textarea, [contenteditable]")) return;
+    if (mode3d || (e.target.closest && e.target.closest("input, select, textarea, [contenteditable]"))) return;
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
     const shortcut = SHORTCUTS.find(
@@ -393,12 +496,7 @@ function bindShortcuts() {
 }
 
 function handleDownload() {
-  const link = document.createElement("a");
-  link.download = `pose-${Date.now()}.png`;
-  link.href = skeleton.toDataURL("image/png");
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  downloadData(mode3d ? current3dGuide().image : skeleton.toDataURL("image/png"), "pose");
 }
 
 function setAiStatus(text) {
@@ -457,10 +555,14 @@ async function handleGenerateImage() {
   setGenerateButtonDisabled(true);
 
   try {
-    const poseImageDataUrl = skeleton.toDataURL("image/png");
-    const url = await generatePoseImage(currentImageDataUrl, pose, poseImageDataUrl, {
-      includeHands: styleDrawsHands(styleId),
-      view,
+    const guide = mode3d ? current3dGuide() : { pose, image: skeleton.toDataURL("image/png") };
+    const semantics = mode3d ? scene3d.semanticState() : {};
+    const url = await generatePoseImage(currentImageDataUrl, guide.pose, guide.image, {
+      includeHands: mode3d || styleDrawsHands(styleId),
+      worldJoints: semantics.worldJoints || null,
+      surfaceFacing: semantics.surfaceFacing || {},
+      view: mode3d ? guide.view : view,
+      depthMode: mode3d ? "3d" : "2d",
     });
     if (url && resultImageEl) {
       resultImageEl.src = url;

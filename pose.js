@@ -239,6 +239,9 @@ function imageDirection(v) {
   return v.y < 0 ? "image-top" : "image-bottom";
 }
 
+/// Joints torsoBend reads.
+const TORSO_JOINTS = ["pelvis", "waist", "neck", "nose", "ear_r", "ear_l", "hip_r", "hip_l"];
+
 /// Which way the pelvis points up: perpendicular to the hip line, on the
 /// spine's side. Falls back to the lower spine (pelvis to waist) when the hips
 /// are too close together to tell (TORSO.minHipSpan), e.g. in profile.
@@ -264,6 +267,8 @@ function pelvisUp(joints) {
 /// so a bend reads as the torso leaning; aiService puts it in the prompt. A
 /// face kept frontal reads as a sideways bend, as for a figure facing the camera.
 export function torsoBend(joints) {
+  // A 3D pose can have joints clipped out of frame (null): nothing to say then.
+  if (TORSO_JOINTS.some((k) => !joints[k])) return null;
   const { waist, neck, nose, ear_r, ear_l } = joints;
   const up = pelvisUp(joints);
   const upper = unit(sub(neck, waist));

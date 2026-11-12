@@ -62,9 +62,21 @@ export class CanvasViewport {
     /// Last empty-space tap, for double-tap fitting: its timeStamp.
     this.lastTapTime = -Infinity;
     this.panKeyDown = false;
+    /// False while another view (3D mode) replaces the stage.
+    this.enabled = true;
     this.pointerOver = false;
     this._bindEvents();
     new ResizeObserver(() => this._apply(this.view)).observe(frame);
+  }
+
+  /// Turn the gestures on or off; turning them off also fits the canvas.
+  setEnabled(enabled) {
+    this.enabled = enabled;
+    if (!enabled) {
+      this.gesture = null;
+      this._setPanKey(false);
+      this.fit();
+    }
   }
 
   /// Back to the whole canvas in the frame.
@@ -100,6 +112,7 @@ export class CanvasViewport {
     this.frame.addEventListener(
       "wheel",
       (e) => {
+        if (!this.enabled) return;
         e.preventDefault();
         this._apply(zoomAt(this.view, Math.exp(-wheelPixels(e) * VIEWPORT.wheelZoomRate), this._local(e)));
       },
@@ -163,7 +176,7 @@ export class CanvasViewport {
     this.frame.addEventListener("pointerenter", () => (this.pointerOver = true));
     this.frame.addEventListener("pointerleave", () => (this.pointerOver = false));
     window.addEventListener("keydown", (e) => {
-      if (e.key !== VIEWPORT.panKey || !this.pointerOver) return;
+      if (e.key !== VIEWPORT.panKey || !this.pointerOver || !this.enabled) return;
       if (e.target.closest && e.target.closest("input, select, textarea, [contenteditable]")) return;
       e.preventDefault();
       this._setPanKey(true);
