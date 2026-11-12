@@ -45,8 +45,12 @@
     </header>
 
     <main class="workspace">
-      <div class="canvas-frame">
-        <canvas id="poseCanvas"></canvas>
+      <!-- The stage holds the canvas layers and is panned / zoomed on screen
+           (canvasViewport.js); the frame clips it. -->
+      <div id="canvasFrame" class="canvas-frame">
+        <div id="canvasStage" class="canvas-stage">
+          <canvas id="poseCanvas"></canvas>
+        </div>
       </div>
     </main>
 
