@@ -1,4 +1,5 @@
 import { createDefaultPose, normalizePose, clonePose, mirrorPose, copySide } from "./pose.js";
+import { getSubtree } from "./poseRig.js";
 import { HAND_GESTURES, applyHandGesture } from "./handPoses.js";
 import { POSE_STYLES, styleDrawsHands } from "./poseStyles.js";
 import { SkeletonCanvas, isValidDrawOrder } from "./skeletonCanvas.js";
@@ -8,8 +9,8 @@ import { POSE_PRESETS, buildPresetPose } from "./posePresets.js";
 import { createDefaultView, normalizeView, isDefaultView, mirrorView, DEPTH_ENDS, isHand } from "./poseView.js";
 import {
   SHORTCUTS,
-  DRAG_MODES,
-  DEFAULT_DRAG_MODE,
+  TOOLS,
+  DEFAULT_TOOL,
   DEFAULT_POSE_STYLE,
   DISPLAY_DEFAULTS,
   HANDS,
@@ -55,8 +56,8 @@ const HAND_TARGETS = [
 let pose = createDefaultPose();
 let jointRadius = DISPLAY_DEFAULTS.jointRadius;
 let linkScale = DISPLAY_DEFAULTS.linkScale;
-/// How joints drag: "ik", "fk" or "free" (DRAG_MODES).
-let dragMode = DEFAULT_DRAG_MODE;
+/// What pressing and dragging a joint does (TOOLS).
+let tool = DEFAULT_TOOL;
 /// Rendering style (POSE_STYLES) and hand detail (HANDS.details).
 let styleId = DEFAULT_POSE_STYLE;
 let handDetail = HANDS.defaultDetail;
@@ -77,8 +78,10 @@ if (savedState && savedState.pose && savedState.pose.joints) {
   if (typeof savedState.linkScale === "number") {
     linkScale = savedState.linkScale;
   }
-  if (savedState.dragMode in DRAG_MODES) {
-    dragMode = savedState.dragMode;
+  // Older saves call the tool "dragMode".
+  const savedTool = savedState.tool ?? savedState.dragMode;
+  if (savedTool in TOOLS) {
+    tool = savedTool;
   }
   if (savedState.styleId in POSE_STYLES) {
     styleId = savedState.styleId;
@@ -95,7 +98,8 @@ if (savedState && savedState.pose && savedState.pose.joints) {
   view = normalizeView(savedState.view);
 }
 
-let history = [clonePose(pose)];
+/// Undo history: { pose, view } snapshots, so depth edits undo like posing.
+let history = [snapshot()];
 let historyIndex = 0;
 
 let currentImageDataUrl = null;
@@ -110,7 +114,7 @@ if (allowPaidModelsInput && savedAllowPaid !== null) {
 const skeleton = new SkeletonCanvas(poseCanvas, pose, {
   jointRadius,
   minorAxisScale: linkScale,
-  dragMode,
+  tool,
   styleId,
   handDetail,
   drawOrder: drawOrder || undefined,
@@ -121,7 +125,7 @@ const skeleton = new SkeletonCanvas(poseCanvas, pose, {
   },
   onChangeEnd: (finalPose) => {
     pose = finalPose;
-    pushHistory(finalPose);
+    pushHistory();
     saveState();
   },
   onDrawOrderChange: (newOrder) => {
@@ -132,6 +136,15 @@ const skeleton = new SkeletonCanvas(poseCanvas, pose, {
     pins = newPins;
     sidebar.setPinCount(pins.length);
     saveState();
+  },
+  onViewChange: (newView) => {
+    view = newView;
+    showView();
+  },
+  onViewChangeEnd: (newView) => {
+    view = newView;
+    saveState();
+    pushHistory();
   },
 });
 
@@ -160,8 +173,8 @@ const sidebar = initSidebar({
   },
   onImageFileChange: handleImageFile,
   onGenerateImageClick: handleGenerateImage,
-  dragModes: Object.entries(DRAG_MODES).map(([id, { label, title }]) => ({ id, label, title })),
-  onDragModeChange: setDragMode,
+  tools: Object.entries(TOOLS).map(([id, { title }]) => ({ id, title })),
+  onToolChange: setTool,
   styles: Object.entries(POSE_STYLES).map(([value, { label }]) => ({ value, label })),
   onStyleChange: (id) => {
     styleId = id;
@@ -208,15 +221,17 @@ const sidebar = initSidebar({
     onCameraChange: (camera) => setView({ ...view, camera }),
     onSliderChange: (key, value) =>
       setView(key === "headScale" ? { ...view, headScale: value } : { ...view, depth: { ...view.depth, [key]: value } }),
+    onCommit: () => pushHistory(),
     onReset: () => {
       setView(createDefaultView());
       showView();
+      pushHistory();
     },
   },
 });
 
 updateUndoRedoState();
-sidebar.setDragMode(dragMode);
+sidebar.setTool(tool);
 sidebar.setStyle(styleId);
 sidebar.setHandDetail(handDetail);
 restoreApiKey();
@@ -295,7 +310,7 @@ async function set3d(enabled) {
   document.getElementById("finger3dBtn").hidden = !enabled;
   document.getElementById("preset3dSelect").hidden = !enabled;
   document.getElementById("transform3dGroup").hidden = !enabled;
-  document.querySelectorAll("#dragModeGroup, #undoBtn, #redoBtn, #resetBtn, #pose2dPanel, #viewPanel").forEach((el) => { el.hidden = enabled; });
+  document.querySelectorAll("#toolShelf, #undoBtn, #redoBtn, #resetBtn, #pose2dPanel, #viewPanel").forEach((el) => { el.hidden = enabled; });
   document.querySelectorAll("#styleSelect, #handDetailGroup, #handDetailLabel").forEach((el) => { el.hidden = enabled; });
   mode2dButton.setAttribute("aria-pressed", String(!enabled));
   mode3dButton.setAttribute("aria-pressed", String(enabled));
@@ -360,7 +375,7 @@ function saveState() {
       pose,
       jointRadius,
       linkScale,
-      dragMode,
+      tool,
       styleId,
       handDetail,
       drawOrder,
@@ -377,10 +392,15 @@ function updateUndoRedoState() {
   sidebar.setUndoRedoState(historyIndex > 0, historyIndex < history.length - 1);
 }
 
-function pushHistory(newPose) {
-  const snapshot = clonePose(newPose);
+/// The current pose and view, for the undo history.
+function snapshot() {
+  return { pose: clonePose(pose), view };
+}
+
+/// Record the current pose and view as a new undo step.
+function pushHistory() {
   history = history.slice(0, historyIndex + 1);
-  history.push(snapshot);
+  history.push(snapshot());
   historyIndex = history.length - 1;
   updateUndoRedoState();
 }
@@ -395,7 +415,7 @@ function showPose(newPose) {
 /// Apply a whole-pose edit (button, preset, shortcut) as one undoable step.
 function commitPose(newPose) {
   showPose(newPose);
-  pushHistory(pose);
+  pushHistory();
 }
 
 /// Reset is undoable like any other edit, so the R shortcut is safe to hit.
@@ -409,7 +429,9 @@ function stepHistory(delta) {
   const next = historyIndex + delta;
   if (next < 0 || next >= history.length) return;
   historyIndex = next;
-  showPose(clonePose(history[historyIndex]));
+  setView(history[historyIndex].view);
+  showView();
+  showPose(clonePose(history[historyIndex].pose));
   updateUndoRedoState();
 }
 
@@ -439,11 +461,25 @@ function restoreApiKey() {
   sidebar.setApiKey(key);
 }
 
-function setDragMode(mode) {
-  dragMode = mode;
-  skeleton.setDragMode(mode);
-  sidebar.setDragMode(mode);
+function setTool(id) {
+  tool = id;
+  skeleton.setTool(id);
+  sidebar.setTool(id);
   saveState();
+}
+
+/// Zoom to the selected joint and everything it carries (a hand with its
+/// fingers, a whole arm from the shoulder); the whole canvas if none.
+function frameSelection() {
+  const key = skeleton.selectedJoint;
+  if (!key) return viewport.fit();
+  const points = getSubtree(key).map((k) => pose.joints[k]).filter(Boolean);
+  viewport.frameBox({
+    minX: Math.min(...points.map((p) => p.x)),
+    minY: Math.min(...points.map((p) => p.y)),
+    maxX: Math.max(...points.map((p) => p.x)),
+    maxY: Math.max(...points.map((p) => p.y)),
+  });
 }
 
 function handleMirror() {
@@ -477,9 +513,10 @@ function bindShortcuts() {
     redo: handleRedo,
     mirror: handleMirror,
     reset: handleReset,
-    dragMode: setDragMode,
+    tool: setTool,
     togglePin: () => skeleton.togglePin(skeleton.focusJoint()),
     fitCanvas: () => viewport.fit(),
+    frameSelection,
   };
 
   window.addEventListener("keydown", (e) => {

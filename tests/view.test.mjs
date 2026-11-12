@@ -11,6 +11,9 @@ import {
   mirrorView,
   depthScale,
   jointDepth,
+  derivedDepth,
+  setJointDepth,
+  depthKey,
   headCircle,
 } from "../poseView.js";
 import { generatePoseImage } from "../aiService.js";
@@ -115,4 +118,50 @@ test("prompt names the camera, near and far limbs by image side, and the head si
   // After mirroring both, the near hand is on the other image side.
   const mirrored = await promptFor(mirrorPose(pose), { view: mirrorView(view) });
   assert.match(mirrored, /The image-right hand is thrust straight at the camera/);
+});
+
+test("any body joint can take its own depth; the rest follow it", () => {
+  let view = createDefaultView();
+  view = setJointDepth(view, "neck", 0.6);
+  assert.equal(jointDepth(view, "neck"), 0.6);
+  assert.equal(jointDepth(view, "nose"), 0.6, "head follows the neck");
+  assert.equal(jointDepth(view, "shoulder_r"), 0.6, "shoulders follow the neck");
+  assert.equal(jointDepth(view, "elbow_r"), 0.3, "elbow halfway to the hand at 0");
+  assert.equal(jointDepth(view, "pelvis"), 0);
+  view = setJointDepth(view, "knee_l", -0.5);
+  assert.equal(jointDepth(view, "knee_l"), -0.5);
+  assert.equal(jointDepth(view, "ankle_l"), 0, "a foot keeps its own depth");
+  assert.ok(!isDefaultView(view));
+  assert.deepEqual(normalizeView(JSON.parse(JSON.stringify(view))).depth, view.depth, "saved and restored");
+});
+
+test("setting a joint back to its natural depth drops its own value; hands and feet keep theirs", () => {
+  let view = setJointDepth(createDefaultView(), "wrist_r", 0.8);
+  view = setJointDepth(view, "elbow_r", 0.7);
+  assert.equal(view.depth.elbow_r, 0.7);
+  view = setJointDepth(view, "elbow_r", derivedDepth(view, "elbow_r"));
+  assert.ok(!("elbow_r" in view.depth));
+  view = setJointDepth(view, "wrist_r", 0);
+  assert.equal(view.depth.wrist_r, 0);
+  assert.ok(isDefaultView(view));
+});
+
+test("a finger's depth is its hand's; mirroring moves every joint's depth across", () => {
+  assert.equal(depthKey("index3_l"), "wrist_l");
+  assert.equal(depthKey("knee_r"), "knee_r");
+  const view = setJointDepth(createDefaultView(), "elbow_r", 0.5);
+  const mirrored = mirrorView(view);
+  assert.equal(mirrored.depth.elbow_l, 0.5);
+  assert.ok(!("elbow_r" in mirrored.depth));
+});
+
+test("prompt names other joints set toward or away from the camera", async () => {
+  const pose = createDefaultPose();
+  let view = setJointDepth(createDefaultView(), "neck", 0.5);
+  view = setJointDepth(view, "knee_r", -0.6); // figure's right = image-left
+  view = setJointDepth(view, "elbow_l", 0.1); // below VIEW.depthNear: not mentioned
+  const prompt = await promptFor(pose, { view });
+  assert.match(prompt, /The chest is closer to the camera/);
+  assert.match(prompt, /The image-left knee is further from the camera/);
+  assert.ok(!/elbow/.test(prompt));
 });

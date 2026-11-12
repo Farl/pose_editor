@@ -83,8 +83,7 @@ function bindImageDrop(zone, onFile) {
 
 /// Segmented toggle in container `groupId`: one button per {id, label, title},
 /// the active one marked aria-pressed. Returns a setter for the active id.
-/// `shortcutAction` names the SHORTCUTS action whose `arg` is the item id.
-function bindSegmented(groupId, items, onChange, shortcutAction) {
+function bindSegmented(groupId, items, onChange) {
   const group = document.getElementById(groupId);
   const buttons = items.map(({ id, label, title }) => {
     const btn = document.createElement("button");
@@ -92,13 +91,28 @@ function bindSegmented(groupId, items, onChange, shortcutAction) {
     btn.className = "segmented-btn";
     btn.textContent = label;
     btn.dataset.value = id;
-    if (title) nameControl(btn, title, shortcutAction && findShortcut(shortcutAction, id));
+    if (title) nameControl(btn, title);
     btn.addEventListener("click", () => onChange && onChange(id));
     return btn;
   });
   if (group) group.append(...buttons);
   return (value) => {
     for (const btn of buttons) btn.setAttribute("aria-pressed", String(btn.dataset.value === value));
+  };
+}
+
+/// Tool shelf (#toolShelf): its icon buttons carry data-tool, a TOOLS id
+/// listed in `tools` ({ id, title }). Names each from its title and
+/// shortcut; returns a setter that marks the active tool.
+function bindToolShelf(tools, onChange) {
+  const buttons = [...document.querySelectorAll("#toolShelf [data-tool]")];
+  for (const btn of buttons) {
+    const item = tools.find((t) => t.id === btn.dataset.tool);
+    if (item) nameControl(btn, item.title, findShortcut("tool", item.id));
+    btn.addEventListener("click", () => onChange && onChange(btn.dataset.tool));
+  }
+  return (value) => {
+    for (const btn of buttons) btn.setAttribute("aria-pressed", String(btn.dataset.tool === value));
   };
 }
 
@@ -146,10 +160,12 @@ function bindSelect(id, options, onChange) {
 /// per `sliders` entry ({ key, label, min, max, step, note? }); an entry with
 /// a `note` starts a group under that caption. Returns a setter that shows a
 /// view ({ camera, values: { key: number } }) and opens the panel when asked.
-function bindViewPanel({ cameras, sliders, onCameraChange, onSliderChange, onReset }) {
+/// `onCommit` runs once a change is complete (camera picked, slider released).
+function bindViewPanel({ cameras, sliders, onCameraChange, onSliderChange, onCommit, onReset }) {
   const panel = document.getElementById("viewPanel");
   const container = document.getElementById("viewSliders");
   const setCamera = bindSelect("cameraSelect", cameras, onCameraChange);
+  if (onCommit) panel?.addEventListener("change", onCommit);
   bindClick("resetViewBtn", onReset);
   const inputs = {};
   for (const { key, label, min, max, step, note } of sliders) {
@@ -209,8 +225,8 @@ export function initSidebar({
   onLinkScaleChange,
   onImageFileChange,
   onGenerateImageClick,
-  dragModes = [],
-  onDragModeChange,
+  tools = [],
+  onToolChange,
   styles = [],
   onStyleChange,
   handDetails = [],
@@ -249,7 +265,7 @@ export function initSidebar({
 
   renderShortcutList(document.getElementById("shortcutList"));
 
-  const setDragMode = bindSegmented("dragModeGroup", dragModes, onDragModeChange, "dragMode");
+  const setTool = bindToolShelf(tools, onToolChange);
   const setHandDetail = bindSegmented("handDetailGroup", handDetails, onHandDetailChange);
   const setStyle = bindSelect("styleSelect", styles, onStyleChange);
   bindMenuSelect("presetSelect", "Preset pose", [{ options: presets }], onPresetSelect);
@@ -289,7 +305,7 @@ export function initSidebar({
   }
 
   return {
-    setDragMode,
+    setTool,
     setHandDetail,
     setStyle,
     setApiKey,

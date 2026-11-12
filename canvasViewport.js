@@ -84,6 +84,18 @@ export class CanvasViewport {
     this._apply({ ...FIT });
   }
 
+  /// Zoom in on `box` ({ minX, minY, maxX, maxY } in canvas units), padded
+  /// and never smaller than VIEWPORT.frameMinSize, centred where the canvas
+  /// edges allow (clampView).
+  frameBox({ minX, minY, maxX, maxY }) {
+    const side = Math.max(maxX - minX, maxY - minY, VIEWPORT.frameMinSize) * (1 + 2 * VIEWPORT.framePad);
+    const px = this._size() / CANVAS.size;
+    const zoom = CANVAS.size / side;
+    const center = { x: ((minX + maxX) / 2) * px, y: ((minY + maxY) / 2) * px };
+    const half = this._size() / 2;
+    this._apply({ zoom, x: half - center.x * zoom, y: half - center.y * zoom });
+  }
+
   /// Frame size in CSS pixels (the frame is square).
   _size() {
     return this.frame.clientWidth;
