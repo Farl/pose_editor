@@ -32,7 +32,7 @@ export function isValidDrawOrder(order) {
 
 /// Pose canvas with Marionette-style posing (see poseRig.js for the solver).
 ///
-/// Three stacked layers, all CANVAS.size square:
+/// Three stacked layers, all CANVAS.size canvas units square:
 ///   - grid      background and grid, on screen only
 ///   - `canvas`  the pose itself, drawn by the current style (poseStyles.js)
 ///               on a transparent background; toDataURL() puts it on
@@ -40,6 +40,9 @@ export function isValidDrawOrder(order) {
 ///   - overlay   interaction hints only (hover/drag rings, pin markers, handles
 ///               for joints the style doesn't draw), with pointer-events
 ///               disabled so input still reaches `canvas`
+/// The pose and overlay layers are rendered `renderScale` backing pixels per
+/// canvas unit (setRenderScale), so they stay sharp when zoomed in on screen
+/// (canvasViewport.js); the grid and every export stay at CANVAS.size.
 ///
 /// Stacking: the last joint you adjust, and every joint that drag moved, are
 /// brought to the front (`drawOrder`, bottom to top). Bones follow their
@@ -72,6 +75,8 @@ export class SkeletonCanvas {
     this.canvas = canvas;
     this.canvas.width = this.canvas.height = CANVAS.size;
     this.ctx = canvas.getContext("2d");
+    /// Backing pixels per canvas unit of the pose and overlay layers.
+    this.renderScale = 1;
     this.grid = this._createLayer("pose-grid", "beforebegin");
     this.overlay = this._createLayer("pose-overlay", "afterend");
     this.overlayCtx = this.overlay.getContext("2d");
@@ -145,16 +150,49 @@ export class SkeletonCanvas {
     this.draw();
   }
 
-  /// The pose as an image on EXPORT_BACKGROUND, without grid or overlay.
+  /// Backing pixels per canvas unit for the pose and overlay layers (an
+  /// integer >= 1). Changes only how sharp they look on screen.
+  setRenderScale(scale) {
+    if (scale !== this.renderScale) {
+      this.renderScale = scale;
+      this.canvas.width = this.canvas.height = this.overlay.width = this.overlay.height = CANVAS.size * scale;
+      this.draw();
+    } else {
+      // The on-screen size changed: overlay handles keep a minimum screen size.
+      this.drawOverlay();
+    }
+  }
+
+  /// The pose as an image on EXPORT_BACKGROUND, without grid or overlay:
+  /// always CANVAS.size square, rendered at one pixel per canvas unit
+  /// whatever the on-screen zoom.
   toDataURL(type = "image/png") {
-    const out = document.createElement("canvas");
-    out.width = this.canvas.width;
-    out.height = this.canvas.height;
+    const layer = this._exportCanvas();
+    this._renderPose(layer.getContext("2d"));
+    const out = this._exportCanvas();
     const ctx = out.getContext("2d");
     ctx.fillStyle = EXPORT_BACKGROUND;
     ctx.fillRect(0, 0, out.width, out.height);
-    ctx.drawImage(this.canvas, 0, 0);
+    ctx.drawImage(layer, 0, 0);
     return out.toDataURL(type);
+  }
+
+  _exportCanvas() {
+    const c = document.createElement("canvas");
+    c.width = c.height = CANVAS.size;
+    return c;
+  }
+
+  /// Abandon the current drag, putting the pose back as it was (no undo
+  /// step). Used when a second finger turns the touch into a pinch.
+  cancelDrag() {
+    if (!this.drag) return;
+    const { startPose, startOrder } = this.drag;
+    this.drag = null;
+    this.pose = startPose;
+    this.drawOrder = startOrder;
+    if (this.onChange) this.onChange(this.pose);
+    this.draw();
   }
 
   /// Back to the default stacking (JOINT_KEYS order).
@@ -311,10 +349,11 @@ export class SkeletonCanvas {
     this.drawOverlay();
   }
 
-  /// Canvas units per CSS pixel (the canvas is CSS-scaled to fit the layout).
+  /// Canvas units per CSS pixel (the canvas is CSS-scaled to fit the layout
+  /// and by the on-screen zoom).
   _canvasScale() {
     const rect = this.canvas.getBoundingClientRect();
-    return rect.width ? this.canvas.width / rect.width : 1;
+    return rect.width ? CANVAS.size / rect.width : 1;
   }
 
   _getCanvasPoint(e) {
@@ -361,8 +400,14 @@ export class SkeletonCanvas {
   }
 
   draw() {
-    const ctx = this.ctx;
-    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this._renderPose(this.ctx, this.renderScale);
+    this.drawOverlay();
+  }
+
+  /// Clear `ctx` and draw the pose on it, `scale` backing pixels per canvas unit.
+  _renderPose(ctx, scale = 1) {
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.clearRect(0, 0, CANVAS.size, CANVAS.size);
     this._drawHead(ctx);
 
     // Segments and points from the style, stacked bottom to top in drawOrder.
@@ -388,8 +433,6 @@ export class SkeletonCanvas {
       for (const seg of segs) drawPoints(seg.a === key ? seg.b : seg.a);
       drawPoints(key);
     }
-
-    this.drawOverlay();
   }
 
   /// A style segment: a filled ellipse (OpenPose "stick", `width` is its
@@ -446,14 +489,17 @@ export class SkeletonCanvas {
 
   drawOverlay() {
     const ctx = this.overlayCtx;
-    ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
+    ctx.setTransform(this.renderScale, 0, 0, this.renderScale, 0, 0);
+    ctx.clearRect(0, 0, CANVAS.size, CANVAS.size);
     ctx.save();
 
-    // Handles for grabbable joints the style doesn't draw (e.g. the waist).
+    // Handles for grabbable joints the style doesn't draw (e.g. the waist),
+    // never smaller on screen than OVERLAY.handleMinPx.
     ctx.lineWidth = OVERLAY.handleWidth;
+    const minHandle = OVERLAY.handleMinPx * this._canvasScale();
     for (const key of JOINT_KEYS) {
       if (this.drawnJoints.has(key) || !isGrabbable(key, this.handDetail)) continue;
-      this._drawRing(ctx, key, OVERLAY.handleColor, 0);
+      this._drawRing(ctx, key, OVERLAY.handleColor, Math.max(0, minHandle - this._jointSize(key)));
     }
 
     ctx.lineWidth = OVERLAY.ringWidth;

@@ -131,6 +131,20 @@ input {
   overflow: hidden;
 }
 
+/* Pan / zoom stage (canvasViewport.js): transformed from its top left corner. */
+.canvas-stage {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  touch-action: none;
+}
+
+/* Empty space pans once zoomed in, and anywhere while the pan key is held. */
+.canvas-frame.is-zoomed #poseCanvas,
+.canvas-frame.is-panning #poseCanvas {
+  cursor: grab;
+}
+
 /* Three stacked layers (see SkeletonCanvas): grid below, pose canvas, then
    the interaction overlay. Only the pose canvas takes input. */
 .canvas-frame canvas {

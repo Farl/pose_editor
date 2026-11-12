@@ -2,6 +2,7 @@ import { createDefaultPose, normalizePose, clonePose, mirrorPose, copySide } fro
 import { HAND_GESTURES, applyHandGesture } from "./handPoses.js";
 import { POSE_STYLES, styleDrawsHands } from "./poseStyles.js";
 import { SkeletonCanvas, isValidDrawOrder } from "./skeletonCanvas.js";
+import { CanvasViewport } from "./canvasViewport.js";
 import { initSidebar } from "./sidebar.js";
 import { POSE_PRESETS, buildPresetPose } from "./posePresets.js";
 import { createDefaultView, normalizeView, isDefaultView, mirrorView, DEPTH_ENDS, isHand } from "./poseView.js";
@@ -127,6 +128,13 @@ const skeleton = new SkeletonCanvas(poseCanvas, pose, {
     saveState();
   },
 });
+
+/// On-screen pan and zoom; exports are unaffected.
+const viewport = new CanvasViewport(
+  document.getElementById("canvasFrame"),
+  document.getElementById("canvasStage"),
+  skeleton
+);
 
 const sidebar = initSidebar({
   onReset: handleReset,
@@ -368,6 +376,7 @@ function bindShortcuts() {
     reset: handleReset,
     dragMode: setDragMode,
     togglePin: () => skeleton.togglePin(skeleton.focusJoint()),
+    fitCanvas: () => viewport.fit(),
   };
 
   window.addEventListener("keydown", (e) => {
