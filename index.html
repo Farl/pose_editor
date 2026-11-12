@@ -39,7 +39,6 @@
         <button id="mode2dBtn" class="segmented-btn" aria-pressed="true">2D</button>
         <button id="mode3dBtn" class="segmented-btn" aria-pressed="false">3D</button>
       </div>
-      <div id="dragModeGroup" class="segmented" role="group" aria-label="Drag mode"></div>
 
       <div id="transform3dGroup" class="segmented" role="group" aria-label="3D transform" hidden>
         <button id="move3dBtn" class="segmented-btn" aria-pressed="true">Move</button>
@@ -60,6 +59,25 @@
       <div id="canvasFrame" class="canvas-frame">
         <div id="canvasStage" class="canvas-stage">
           <canvas id="poseCanvas"></canvas>
+        </div>
+        <!-- Tool shelf (TOOLS in editorConfig.js): what pressing and dragging a
+             joint does. sidebar.js names each button from its data-tool. -->
+        <div id="toolShelf" class="tool-shelf" role="group" aria-label="Tools">
+          <button class="icon-btn" data-tool="select" aria-pressed="false">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v10l2.8-2.6 1.9 4.1 1.6-.7-1.9-4.1h3.8z" /></svg>
+          </button>
+          <button class="icon-btn" data-tool="ik" aria-pressed="false">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v13M1.5 8h13M6 3.5l2-2 2 2M6 12.5l2 2 2-2M3.5 6l-2 2 2 2M12.5 6l2 2-2 2" /></svg>
+          </button>
+          <button class="icon-btn" data-tool="fk" aria-pressed="false">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="12" r="1.5" /><path d="M5.1 10.9 10.5 5.5" /><path d="M13.5 9.5A8.5 8.5 0 0 0 6.5 2.5" /><path d="m11.5 9.3 2 .2.4-2" /></svg>
+          </button>
+          <button class="icon-btn" data-tool="depth" aria-pressed="false">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="10" cy="6" r="4.5" /><circle cx="4" cy="12" r="1.5" /><path d="M5.2 10.8 6.8 9.2" /></svg>
+          </button>
+          <button class="icon-btn" data-tool="free" aria-pressed="false">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="5" cy="11" r="2" /><path d="M6.5 9.5 13 3M9.5 3H13v3.5" /></svg>
+          </button>
         </div>
         <div id="scene3d" hidden></div>
       </div>

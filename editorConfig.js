@@ -81,8 +81,12 @@ export const VIEW = {
     high: { label: "High angle" },
   },
   defaultCamera: "eye",
-  /// Per hand / foot distance from the body plane: -1 far, 0 level, +1 toward the camera.
+  /// Per joint distance from the body plane: -1 far, 0 level, +1 toward the camera.
   depth: { min: -1, max: 1, step: 0.1 },
+  /// Depth tool: CSS pixels of vertical drag per unit of depth, the step it
+  /// rounds to, and how close to the joint's natural depth (what it derives
+  /// from its neighbours, poseView.js) it snaps back there.
+  depthDrag: { pxPerUnit: 120, step: 0.05, snap: 0.08 },
   /// Limbs are drawn thicker when near: width x 2^(gain x depth), so +1 doubles, -1 halves.
   depthWidthGain: 1,
   /// |depth| from which a hand or foot is mentioned in the prompt, and from which
@@ -137,6 +141,11 @@ export const VIEWPORT = {
   /// Zoom range; 1 fits the whole canvas in its frame.
   minZoom: 1,
   maxZoom: 5,
+  /// Frame selected (F): the joint and everything it carries, padded by this
+  /// fraction of the box on each side, the box at least `frameMinSize` canvas
+  /// units so a single joint isn't zoomed to maxZoom.
+  framePad: 0.25,
+  frameMinSize: 240,
   /// Wheel zoom: factor e^(-rate x deltaY) per event, with deltaY in pixels.
   wheelZoomRate: 0.002,
   /// Pixels per wheel "line" (WheelEvent.deltaMode 1) and "page" (2).
@@ -152,24 +161,30 @@ export const VIEWPORT = {
   maxRenderScale: 3,
 };
 
-/// How dragging a joint behaves. The mode is a sidebar toggle plus a one-key
-/// shortcut (`key`, added to SHORTCUTS below); it is saved with the editor state.
-///   ik    hands/feet: the limb follows, elbow/knee keeps its bend side
-///         elbows/knees: pick the bend side, hand/foot stays (knees in -> out)
-///   fk    every joint rotates the bone from its parent, children follow
-///   free  only the grabbed joint moves; bone lengths may change, which is how
-///         foreshortening (perspective) is drawn
+/// Canvas tools: what pressing and dragging a joint does. Picked on the tool
+/// shelf over the canvas or by `key` (added to SHORTCUTS below, and the same
+/// keys as the usual 3D-software gizmo switches); saved with the editor state.
+///   select  press a joint to select it (F frames it, P pins it); nothing moves
+///   ik      move: hands/feet: the limb follows, elbow/knee keeps its bend side
+///           elbows/knees: pick the bend side, hand/foot stays (knees in -> out)
+///   fk      rotate: every joint rotates the bone from its parent, children follow
+///   depth   drag up to bring the joint toward the camera, down to push it
+///           away (VIEW.depth, VIEW.depthDrag); a finger sets its whole hand
+///   free    only the grabbed joint moves; bone lengths may change, which is
+///           how foreshortening (perspective) is drawn
 /// In ik/fk the hips move the whole body and head, neck and shoulders rotate.
-export const DRAG_MODES = {
-  ik: { label: "IK", title: "Inverse kinematics", key: "i" },
-  fk: { label: "FK", title: "Forward kinematics", key: "f" },
-  free: { label: "Free", title: "Free move", key: "g" },
+export const TOOLS = {
+  select: { title: "Select", key: "q" },
+  ik: { title: "Move (IK)", key: "w" },
+  fk: { title: "Rotate (FK)", key: "e" },
+  depth: { title: "Depth", key: "r" },
+  free: { title: "Free move", key: "g" },
 };
 
-export const DEFAULT_DRAG_MODE = "ik";
+export const DEFAULT_TOOL = "ik";
 
-/// Holding this modifier while dragging is a temporary "free" mode drag, so a
-/// quick foreshortening tweak doesn't need a mode switch.
+/// Holding this modifier while dragging is a temporary "free" tool drag, so a
+/// quick foreshortening tweak doesn't need a tool switch.
 export const FREE_MOVE_MODIFIER = "altKey";
 
 /// Interaction overlay (hover / drag / pin markers). Drawn on a separate layer
@@ -190,6 +205,17 @@ export const OVERLAY = {
   /// Smallest on-screen radius (CSS px) of those handles, so the waist stays
   /// visible on a phone-sized canvas.
   handleMinPx: 7,
+  /// Ring around the selected joint (last pressed; the target of F and P).
+  selectColor: "#38bdf8",
+  /// Depth tool: rings tinted by each joint's depth, near or far colour, from
+  /// `depthMinAlpha` opacity just off 0 to opaque at full depth, `depthRingWidth`
+  /// thick; and the value of the joint under the pointer (else the selected one).
+  depthNearColor: [251, 146, 60],
+  depthFarColor: [96, 165, 250],
+  depthMinAlpha: 0.45,
+  depthRingWidth: 3,
+  /// Label size and gap from the joint in CSS pixels, so it reads the same at any zoom.
+  depthLabel: { sizePx: 13, weight: 600, family: "'IBM Plex Sans', sans-serif", color: "#ffffff", gapPx: 10 },
 };
 
 /// Keyboard shortcuts. `mod` means Ctrl on Windows/Linux and Cmd on macOS.
@@ -199,15 +225,16 @@ export const SHORTCUTS = [
   { key: "z", mod: true, shift: false, action: "undo", label: "Undo" },
   { key: "z", mod: true, shift: true, action: "redo", label: "Redo" },
   { key: "y", mod: true, shift: false, action: "redo", label: "Redo" },
-  { key: "r", mod: false, shift: false, action: "reset", label: "Reset pose" },
+  { key: "r", mod: false, shift: true, action: "reset", label: "Reset pose" },
   { key: "m", mod: false, shift: false, action: "mirror", label: "Mirror" },
   { key: "p", mod: false, shift: false, action: "togglePin", label: "Pin hovered hand or foot" },
   { key: "0", mod: false, shift: false, action: "fitCanvas", label: "Fit canvas" },
-  ...Object.entries(DRAG_MODES).map(([id, { key, title }]) => ({
+  { key: "f", mod: false, shift: false, action: "frameSelection", label: "Frame selected joint" },
+  ...Object.entries(TOOLS).map(([id, { key, title }]) => ({
     key,
     mod: false,
     shift: false,
-    action: "dragMode",
+    action: "tool",
     arg: id,
     label: title,
   })),
@@ -217,6 +244,7 @@ export const SHORTCUTS = [
 export const GESTURES = [
   { input: "Double-click or double-tap", label: "Pin hand or foot" },
   { input: "Alt + drag", label: "Free move, once" },
+  { input: "Depth tool: drag a joint up or down", label: "Toward or away from the camera" },
   { input: "Scroll or pinch", label: "Zoom" },
   { input: "Drag empty space, or Space + drag", label: "Pan" },
   { input: "Double-click empty space", label: "Fit canvas" },

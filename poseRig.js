@@ -3,7 +3,7 @@
 /// have the body follow. Pure functions over pose objects, no DOM, so they can
 /// be unit-tested in Node (see tests/poseRig.test.mjs).
 ///
-/// Drag behaviour (from the grabbed joint and the drag mode, see DRAG_MODES):
+/// Drag behaviour (from the grabbed joint and the tool, see TOOLS):
 ///   - root (pelvis)              -> translate the whole figure
 ///   - IK end (wrist/ankle), "ik" -> two-bone IK, elbow/knee keeps its bend direction
 ///   - IK mid (elbow/knee), "ik"  -> pole: the hand/foot stays put and the
@@ -25,7 +25,7 @@ import {
   isFingerJoint,
   clonePose,
 } from "./pose.js";
-import { DEFAULT_DRAG_MODE, HANDS } from "./editorConfig.js";
+import { DEFAULT_TOOL, HANDS } from "./editorConfig.js";
 
 /// Minimum reach of a chain, as a fraction of its total length. Keeps the IK
 /// away from the fully-folded singularity.
@@ -162,7 +162,7 @@ function solveChain(joints, endKey, target, sign) {
 /// Pose that results from dragging `key` (as it was in `startPose`) to `target`.
 /// Always computed from the drag-start pose so long drags don't accumulate drift.
 ///
-/// options.mode        "ik", "fk" or "free" (DRAG_MODES)
+/// options.mode        "ik", "fk" or "free" (TOOLS)
 /// options.freeMove    force a "free" drag (the Alt modifier); ignores pins
 /// options.pins        iterable of pinned IK end keys
 /// options.handDetail  "simple" or "full" (HANDS.details)
@@ -170,7 +170,7 @@ export function applyDrag(
   startPose,
   key,
   target,
-  { mode = DEFAULT_DRAG_MODE, freeMove = false, pins = [], handDetail = HANDS.defaultDetail } = {}
+  { mode = DEFAULT_TOOL, freeMove = false, pins = [], handDetail = HANDS.defaultDetail } = {}
 ) {
   const pose = clonePose(startPose);
   const j = pose.joints;

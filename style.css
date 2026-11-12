@@ -166,6 +166,37 @@ canvas.pose-overlay {
   pointer-events: none;
 }
 
+/* Tool shelf: a column of tool buttons over the canvas's top left corner,
+   outside the pan / zoom stage so it stays put; the active tool lit. */
+.tool-shelf {
+  position: absolute;
+  top: var(--gap);
+  left: var(--gap);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--panel);
+}
+
+/* :hover too, so a tapped button (touch keeps :hover) still shows as active. */
+.tool-shelf .icon-btn[aria-pressed="true"],
+.tool-shelf .icon-btn[aria-pressed="true"]:hover {
+  background: var(--active-bg);
+  color: var(--active-text);
+}
+
+/* Shelf tooltips open to the right, over the canvas. */
+.tool-shelf [data-tip]:hover::after,
+.tool-shelf [data-tip]:focus-visible::after {
+  top: 50%;
+  left: calc(100% + 8px);
+  transform: translateY(-50%);
+}
+
 /* ---- Controls ---------------------------------------------------------- */
 
 .btn,
@@ -229,7 +260,7 @@ canvas.pose-overlay {
   color: var(--pin);
 }
 
-/* Drag mode switch: one track, the pressed mode lit. */
+/* Segmented switch: one track, the pressed option lit. */
 .segmented {
   display: flex;
   gap: 2px;
@@ -488,10 +519,16 @@ input[type="range"] {
     padding: 0 8px;
   }
 
-  /* Tight enough that 2D/3D, the drag modes and Export PNG share one row at 390px. */
+  /* Tight enough that the toolbar shares one row at 390px. */
   .segmented-btn {
     min-width: 0;
     padding: 0 6px;
+  }
+
+  /* Finger-sized tool buttons. */
+  .tool-shelf .icon-btn {
+    width: 36px;
+    height: 36px;
   }
 
   /* Keyboard shortcuts panel: no keyboard on phones. */
@@ -525,7 +562,7 @@ input[type="range"] {
     gap: 4px;
   }
 
-  .icon-btn {
+  .toolbar .icon-btn {
     width: 26px;
   }
 

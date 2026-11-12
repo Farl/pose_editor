@@ -1,14 +1,24 @@
 import { JOINT_KEYS, clonePose, isFingerJoint } from "./pose.js";
 import { applyDrag, isPinnable, isGrabbable } from "./poseRig.js";
 import { buildRenderList } from "./poseStyles.js";
-import { createDefaultView, depthScale, segmentDepthScale, jointDepth, headCircle } from "./poseView.js";
+import {
+  createDefaultView,
+  depthScale,
+  segmentDepthScale,
+  jointDepth,
+  derivedDepth,
+  depthKey,
+  setJointDepth,
+  headCircle,
+  DEPTH_JOINTS,
+} from "./poseView.js";
 import {
   CANVAS,
   PICKING,
   OVERLAY,
   HANDS,
   FREE_MOVE_MODIFIER,
-  DEFAULT_DRAG_MODE,
+  DEFAULT_TOOL,
   DEFAULT_POSE_STYLE,
   EXPORT_BACKGROUND,
   VIEW,
@@ -20,6 +30,9 @@ function bringToFront(order, keys) {
   const front = new Set(keys);
   return [...order.filter((k) => !front.has(k)), ...keys];
 }
+
+/// Cursor over a joint, per tool (TOOLS).
+const CURSORS = { default: "grab", select: "pointer", depth: "ns-resize" };
 
 /// True when `order` lists every joint exactly once (e.g. a saved draw order).
 export function isValidDrawOrder(order) {
@@ -51,8 +64,10 @@ export function isValidDrawOrder(order) {
 /// (poseView.js), hands and feet set toward the camera stack above everything
 /// else and those set away below, whatever the drag order.
 ///
-/// Gestures: drag a joint to pose (behaviour follows `dragMode`: IK, FK or Free); Alt-drag to move a single joint freely;
-/// double-click / double-tap a hand or foot to pin it in place.
+/// Gestures follow the `tool` (TOOLS): press a joint to select it (every
+/// tool), drag it to pose (IK, FK or Free) or to set its depth (Depth: up is
+/// toward the camera); Alt-drag moves a single joint freely; double-click /
+/// double-tap a hand or foot to pin it in place.
 export class SkeletonCanvas {
   constructor(
     canvas,
@@ -60,7 +75,7 @@ export class SkeletonCanvas {
     {
       jointRadius = 8,
       minorAxisScale = 1,
-      dragMode = DEFAULT_DRAG_MODE,
+      tool = DEFAULT_TOOL,
       styleId = DEFAULT_POSE_STYLE,
       handDetail = HANDS.defaultDetail,
       drawOrder = JOINT_KEYS,
@@ -70,6 +85,8 @@ export class SkeletonCanvas {
       onChangeEnd,
       onPinsChange,
       onDrawOrderChange,
+      onViewChange,
+      onViewChangeEnd,
     } = {}
   ) {
     this.canvas = canvas;
@@ -85,7 +102,7 @@ export class SkeletonCanvas {
     this.pose = pose;
     this.jointRadius = jointRadius;
     this.minorAxisScale = minorAxisScale;
-    this.dragMode = dragMode;
+    this.tool = tool;
     this.styleId = styleId;
     this.handDetail = handDetail;
     /// Depth and camera (poseView.js).
@@ -100,10 +117,15 @@ export class SkeletonCanvas {
     this.onChangeEnd = onChangeEnd;
     this.onPinsChange = onPinsChange;
     this.onDrawOrderChange = onDrawOrderChange;
+    /// Depth tool drags: the view while dragging, and once released.
+    this.onViewChange = onViewChange;
+    this.onViewChangeEnd = onViewChangeEnd;
     /// Joint keys bottom to top; see "Stacking" above.
     this.drawOrder = isValidDrawOrder(drawOrder) ? [...drawOrder] : [...JOINT_KEYS];
 
-    /// Active drag: { key, pointerId, startPose, startOrder, moved, time }, or null.
+    /// Active drag, or null:
+    ///   { key, pointerId, startPose, startOrder, moved, time }  posing
+    ///   + { startView, startY, startDepth }                    Depth tool
     this.drag = null;
     this.hoverJoint = null;
     /// Last joint pressed; the target of keyboard pin toggling.
@@ -130,9 +152,11 @@ export class SkeletonCanvas {
     this.draw();
   }
 
-  /// "ik", "fk" or "free" (see DRAG_MODES); takes effect from the next drag.
-  setDragMode(mode) {
-    this.dragMode = mode;
+  /// A TOOLS id; takes effect from the next press.
+  setTool(tool) {
+    this.tool = tool;
+    this._setHover(this.hoverJoint, true);
+    this.drawOverlay();
   }
 
   /// Rendering style id (see POSE_STYLES).
@@ -193,15 +217,20 @@ export class SkeletonCanvas {
     return c;
   }
 
-  /// Abandon the current drag, putting the pose back as it was (no undo
-  /// step). Used when a second finger turns the touch into a pinch.
+  /// Abandon the current drag, putting the pose (or depth) back as it was
+  /// (no undo step). Used when a second finger turns the touch into a pinch.
   cancelDrag() {
     if (!this.drag) return;
-    const { startPose, startOrder } = this.drag;
+    const { startPose, startOrder, startView } = this.drag;
     this.drag = null;
-    this.pose = startPose;
-    this.drawOrder = startOrder;
-    if (this.onChange) this.onChange(this.pose);
+    if (startView) {
+      this.view = startView;
+      if (this.onViewChange) this.onViewChange(this.view);
+    } else {
+      this.pose = startPose;
+      this.drawOrder = startOrder;
+      if (this.onChange) this.onChange(this.pose);
+    }
     this.draw();
   }
 
@@ -287,6 +316,11 @@ export class SkeletonCanvas {
         this.togglePin(hit);
         return;
       }
+      if (this.tool === "select") {
+        this.lastTap = { key: hit, time: e.timeStamp };
+        this.drawOverlay();
+        return;
+      }
 
       canvas.setPointerCapture(e.pointerId);
       this.drag = {
@@ -297,6 +331,10 @@ export class SkeletonCanvas {
         moved: false,
         time: e.timeStamp,
       };
+      if (this.tool === "depth") {
+        const key = depthKey(hit);
+        Object.assign(this.drag, { key, startView: this.view, startY: e.clientY, startDepth: jointDepth(this.view, key) });
+      }
       this.drawOverlay();
     });
 
@@ -307,8 +345,12 @@ export class SkeletonCanvas {
         return;
       }
       this.drag.moved = true;
+      if (this.drag.startView) {
+        this._dragDepth(e.clientY);
+        return;
+      }
       this.pose = applyDrag(this.drag.startPose, this.drag.key, point, {
-        mode: this.dragMode,
+        mode: this.tool,
         handDetail: this.handDetail,
         freeMove: e[FREE_MOVE_MODIFIER],
         pins: this.pins,
@@ -320,17 +362,38 @@ export class SkeletonCanvas {
 
     const endDrag = (e) => {
       if (!this.drag || e.pointerId !== this.drag.pointerId) return;
-      const { key, moved, time } = this.drag;
+      const { key, moved, time, startView } = this.drag;
       this.drag = null;
-      if (moved) this._setDrawOrder(this.drawOrder);
       this.lastTap = moved ? null : { key, time };
       // Redraw so the drag highlight doesn't linger after release.
       this.drawOverlay();
-      if (moved && this.onChangeEnd) this.onChangeEnd(this.pose);
+      if (!moved) return;
+      if (startView) {
+        if (this.onViewChangeEnd) this.onViewChangeEnd(this.view);
+      } else {
+        this._setDrawOrder(this.drawOrder);
+        if (this.onChangeEnd) this.onChangeEnd(this.pose);
+      }
     };
     canvas.addEventListener("pointerup", endDrag);
     canvas.addEventListener("pointercancel", endDrag);
     canvas.addEventListener("pointerleave", () => this._setHover(null));
+  }
+
+  /// Depth tool: the dragged joint's depth from how far the pointer moved up
+  /// (toward the camera) or down since the press, rounded to a step and
+  /// snapped to the depth the joint would have on its own (derivedDepth),
+  /// where it gives up its own value.
+  _dragDepth(clientY) {
+    const { key, startView, startY, startDepth } = this.drag;
+    const { pxPerUnit, step, snap } = VIEW.depthDrag;
+    const raw = startDepth + (startY - clientY) / pxPerUnit;
+    const natural = derivedDepth(startView, key);
+    // Divide by the whole steps per unit (not multiply by step) so 7 steps of 0.05 is exactly 0.35.
+    const value = Math.abs(raw - natural) < snap ? natural : Math.round(raw / step) / Math.round(1 / step);
+    this.view = setJointDepth(startView, key, Math.min(VIEW.depth.max, Math.max(VIEW.depth.min, value)));
+    if (this.onViewChange) this.onViewChange(this.view);
+    this.draw();
   }
 
   /// Drag-start order with the joints this drag moved brought to the front,
@@ -352,10 +415,12 @@ export class SkeletonCanvas {
     return isPinnable(key) && !!last && last.key === key && time - last.time <= PICKING.doubleTapMs;
   }
 
-  _setHover(key) {
-    if (key === this.hoverJoint) return;
+  /// Hovered joint (or null) and the cursor for it under the current tool;
+  /// `force` updates the cursor even if the joint didn't change.
+  _setHover(key, force = false) {
+    if (key === this.hoverJoint && !force) return;
     this.hoverJoint = key;
-    this.canvas.style.cursor = key ? "grab" : "";
+    this.canvas.style.cursor = key ? CURSORS[this.tool] || CURSORS.default : "";
     this.drawOverlay();
   }
 
@@ -521,14 +586,47 @@ export class SkeletonCanvas {
     }
 
     ctx.lineWidth = OVERLAY.ringWidth;
+    if (this.tool === "depth") this._drawDepthRings(ctx);
     for (const key of this.pins) this._drawPin(ctx, this.pose.joints[key]);
+    if (this.selectedJoint) this._drawRing(ctx, this.selectedJoint, OVERLAY.selectColor);
 
     const activeKey = this.drag && this.drag.key;
     if (this.hoverJoint && this.hoverJoint !== activeKey) {
       this._drawRing(ctx, this.hoverJoint, OVERLAY.hoverColor);
     }
     if (activeKey) this._drawRing(ctx, activeKey, OVERLAY.activeColor);
+    if (this.tool === "depth") this._drawDepthLabel(ctx, activeKey || this.hoverJoint || this.selectedJoint);
     ctx.restore();
+  }
+
+  /// Depth tool: a ring on every body joint off the body plane, tinted
+  /// toward OVERLAY.depthNearColor or depthFarColor by its depth.
+  _drawDepthRings(ctx) {
+    ctx.save();
+    ctx.lineWidth = OVERLAY.depthRingWidth;
+    for (const key of DEPTH_JOINTS) {
+      const d = jointDepth(this.view, key);
+      if (!d) continue;
+      const [r, g, b] = d > 0 ? OVERLAY.depthNearColor : OVERLAY.depthFarColor;
+      const alpha = OVERLAY.depthMinAlpha + (1 - OVERLAY.depthMinAlpha) * Math.min(1, Math.abs(d));
+      this._drawRing(ctx, key, `rgba(${r}, ${g}, ${b}, ${alpha})`);
+    }
+    ctx.restore();
+  }
+
+  /// Depth of joint `key` (a finger shows its hand's), signed ("+0.40"), beside it.
+  _drawDepthLabel(ctx, key) {
+    if (!key) return;
+    key = depthKey(key);
+    const j = this.pose.joints[key];
+    if (!j) return;
+    const { sizePx, weight, family, color, gapPx } = OVERLAY.depthLabel;
+    const scale = this._canvasScale();
+    const d = jointDepth(this.view, key);
+    ctx.font = `${weight} ${sizePx * scale}px ${family}`;
+    ctx.fillStyle = color;
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${d > 0 ? "+" : ""}${d.toFixed(2)}`, j.x + this._jointSize(key) + gapPx * scale, j.y);
   }
 
   /// Circle around joint `key`, `gap` outside its drawn radius.

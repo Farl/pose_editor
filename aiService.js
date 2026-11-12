@@ -1,7 +1,7 @@
 import { FINGERS, fingerStates, handContact } from "./handPoses.js";
 import { DEPTH_ENDS, isDefaultView, isHand } from "./poseView.js";
 import { CANVAS, VIEW, TORSO } from "./editorConfig.js";
-import { torsoBend } from "./pose.js";
+import { torsoBend, sideOf } from "./pose.js";
 
 const API_TIMEOUT_MS = 60_000;
 
@@ -148,9 +148,40 @@ const DEPTH_PROMPTS = {
   },
 };
 
+/// Body joints given a depth of their own (poseView.js), by name: centre-line
+/// joints by body part, sided ones by their name without the side suffix.
+const DEPTH_JOINT_NAMES = {
+  pelvis: "hips",
+  waist: "waist",
+  neck: "chest",
+  nose: "head",
+  shoulder: "shoulder",
+  elbow: "elbow",
+  hip: "hip",
+  knee: "knee",
+  heel: "heel",
+  big_toe: "toes",
+  small_toe: "toes",
+  eye: "eye",
+  ear: "ear",
+};
+
+/// Depth wording for those joints, near or far.
+const DEPTH_JOINT_PROMPTS = {
+  near: "is closer to the camera than the rest of the body: draw it larger, with the body foreshortened toward the viewer there",
+  far: "is further from the camera than the rest of the body: draw it smaller, behind the parts in front of it",
+};
+
+/// "The image-left elbow" / "The chest": a depth joint named for the prompt.
+function depthJointName(joints, key) {
+  const name = DEPTH_JOINT_NAMES[key.replace(/_[rl]$/, "")];
+  return sideOf(key) === "c" ? `The ${name}` : `The ${imageSide(joints, key)} ${name}`;
+}
+
 /// Lines for the view (poseView.js): camera height, hands and feet set toward
-/// or away from the camera (named by image side, like describeHands), and a
-/// big head. Empty for the default view, so the prompt is then unchanged.
+/// or away from the camera (named by image side, like describeHands), other
+/// joints given a depth of their own, and a big head. Empty for the default
+/// view, so the prompt is then unchanged.
 function describeView(joints, view, depthMode = "2d", surfaceFacing = {}) {
   if (!view || isDefaultView(view)) return [];
   const lines = [];
@@ -161,7 +192,10 @@ function describeView(joints, view, depthMode = "2d", surfaceFacing = {}) {
   const ends = DEPTH_ENDS.filter((k) => joints[k] && Math.abs(view.depth[k]) >= VIEW.depthNear).sort(
     (a, b) => joints[a].x - joints[b].x
   );
-  if (ends.length) lines.push("Limbs drawn thicker in IMAGE 1 are closer to the camera; thinner ones are further away.");
+  const others = Object.keys(view.depth)
+    .filter((k) => !DEPTH_ENDS.includes(k) && joints[k] && Math.abs(view.depth[k]) >= VIEW.depthNear)
+    .sort((a, b) => joints[a].x - joints[b].x);
+  if (ends.length || others.length) lines.push("Limbs drawn thicker in IMAGE 1 are closer to the camera; thinner ones are further away.");
   for (const key of ends) {
     const z = view.depth[key];
     const level = z >= VIEW.depthStrong ? "strong" : z > 0 ? "near" : "far";
@@ -170,6 +204,9 @@ function describeView(joints, view, depthMode = "2d", surfaceFacing = {}) {
     const safeLevel = depthMode === "3d" && level === "strong" && !surfaceFacing[key] ? "near" : level;
     const description = DEPTH_PROMPTS[part][safeLevel];
     lines.push(`The ${imageSide(joints, key)} ${part} ${description}.`);
+  }
+  for (const key of others) {
+    lines.push(`${depthJointName(joints, key)} ${DEPTH_JOINT_PROMPTS[view.depth[key] > 0 ? "near" : "far"]}.`);
   }
   if (view.headScale > VIEW.head.min) {
     lines.push(
