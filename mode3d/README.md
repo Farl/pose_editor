@@ -2,7 +2,29 @@
 
 The editor defaults to 2D. Three.js 0.164.1 and Samba Dancing are loaded only when 3D is selected; the model URL is pinned to the Three.js r164 repository in `config.js`. The FBX is downloaded at runtime and is not included in this repository. Load failures are reported in the UI; only then is the clearly labelled procedural fallback used. There is no model-import or proportion-adjustment UI.
 
-Move hips, hands or feet, or rotate joints and finger bones. Drag empty space to orbit, scroll to zoom, and adjust field of view in the panel. The toolbar holds the mode and Move/Rotate choices; preset, finger handles, reset and exports live in the initially collapsed 3D panel. 3D state is separate from 2D state/history. Mode selection itself is not persisted and 3D does not have undo.
+The tool shelf and keys are shared with 2D (`TOOLS` in `editorConfig.js`). In 3D:
+- **Q (select):** click a handle, or the body (the nearest handle wins), to select a joint.
+- **W (move):** drag a handle across the screen, or use the gizmo axes.
+  - Hands and feet use IK.
+  - Elbows and knees pick their bend side.
+  - The hips carry the body.
+  - Any other joint swings its bone.
+- **E (rotate):** the gizmo turns the selected joint's children.
+- **R (depth):** drag a handle up or down to move it toward or away from the camera.
+- **Free (G):** 2D only.
+
+Handles are picked on screen within the same radius as 2D (`PICKING.radiusPx`), so they can be tapped on a phone.
+
+The camera:
+- Drag empty space (or Alt + drag anywhere) to orbit.
+- Right- or middle-drag, or two fingers, to pan.
+- Wheel or pinch to zoom.
+- **F** frames the selected joint and what it carries, and **0** frames the figure.
+- **1 / 2 / 3** show the front, side and top views.
+- Pressing an end of the corner axis gizmo looks from that side.
+- **X** switches the gizmo between world axes and axes along the selected bone.
+
+Tunables are in `CONTROLS` in `config.js`. Preset, finger handles, reset and exports live in the initially collapsed 3D panel. 3D state is separate from 2D state/history. Mode selection itself is not persisted and 3D does not have undo.
 
 `rigMap.js` maps actual Mixamo names to the existing 66-joint rig. Shoulders use Arm bones, not collar Shoulder bones. Eye and finger points use actual bones; the nose, ears, heels and outer toes include derived landmarks. The saved state records their world positions. Samba's same-name leaf skin-cluster bones inherit their parents; they are not animated a second time. The head bone is a neck-side pivot rather than the nose, so its bind offset is preserved. Palm and foot retargeting uses two-axis frames to retain roll, not just limb direction.
 

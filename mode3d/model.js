@@ -137,6 +137,8 @@ export async function loadBody(scene) {
     sync,
     surfaceVertices,
     model,
+    /// The model's meshes, for picking the body under the pointer.
+    meshes,
     bindRig,
     dispose() {
       model.traverse((n) => {

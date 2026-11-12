@@ -283,6 +283,7 @@ async function set3d(enabled) {
       const raw = localStorage.getItem(MODE3D_STORAGE_KEY);
       let saved = null; try { saved = raw && JSON.parse(raw); } catch { /* Ignore invalid saved 3D state. */ }
       scene3d = await createScene(sceneHost, save3d, saved);
+      scene3d.setTool(tool);
       const container = document.createElement("div");
       container.style.cssText = "position:fixed;left:-10000px;top:0";
       const canvas = document.createElement("canvas"); container.appendChild(canvas); document.body.appendChild(container);
@@ -291,6 +292,8 @@ async function set3d(enabled) {
   }
   mode3d = enabled;
   viewport.setEnabled(!enabled);
+  // Tools limited to 2D (TOOLS scope) fall back to the default in 3D.
+  if (enabled && TOOLS[tool].scope === "2d") setTool(DEFAULT_TOOL);
   const exportsHost = enabled ? document.getElementById('controls3dPanel') : document.querySelector('.tool-group-end');
   exportsHost.appendChild(document.getElementById('downloadBtn'));
   document.querySelector('.tool-group-end').hidden = enabled;
@@ -309,12 +312,11 @@ async function set3d(enabled) {
   reset3dButton.hidden = !enabled;
   document.getElementById("finger3dBtn").hidden = !enabled;
   document.getElementById("preset3dSelect").hidden = !enabled;
-  document.getElementById("transform3dGroup").hidden = !enabled;
-  document.querySelectorAll("#toolShelf, #undoBtn, #redoBtn, #resetBtn, #pose2dPanel, #viewPanel").forEach((el) => { el.hidden = enabled; });
+  document.querySelectorAll("#undoBtn, #redoBtn, #resetBtn, #pose2dPanel, #viewPanel").forEach((el) => { el.hidden = enabled; });
   document.querySelectorAll("#styleSelect, #handDetailGroup, #handDetailLabel").forEach((el) => { el.hidden = enabled; });
   mode2dButton.setAttribute("aria-pressed", String(!enabled));
   mode3dButton.setAttribute("aria-pressed", String(enabled));
-  setAiStatus(enabled ? (scene3d.modelError || "Move hands, feet or hips; rotate joints to pose. Orbit by dragging empty space. Hidden joints remain in the guide.") : "");
+  setAiStatus(enabled ? (scene3d.modelError || "Drag a joint to pose; drag empty space to orbit. Hidden joints remain in the guide.") : "");
 }
 mode2dButton.addEventListener("click", () => set3d(false));
 mode3dButton.addEventListener("click", () => set3d(true));
@@ -343,13 +345,6 @@ document.getElementById("finger3dBtn").addEventListener("click", (event) => {
   const enabled = event.currentTarget.getAttribute("aria-pressed") !== "true";
   event.currentTarget.setAttribute("aria-pressed", String(enabled)); scene3d.setFingerHandles(enabled);
 });
-for (const [id, mode] of [["move3dBtn", "translate"], ["rotate3dBtn", "rotate"]]) {
-  document.getElementById(id).addEventListener("click", () => {
-    scene3d.setMode(mode);
-    document.getElementById("move3dBtn").setAttribute("aria-pressed", String(mode === "translate"));
-    document.getElementById("rotate3dBtn").setAttribute("aria-pressed", String(mode === "rotate"));
-  });
-}
 function current3dGuide() {
   return render3dGuide(scene3d, guide3d, jointRadius, linkScale);
 }
@@ -464,6 +459,7 @@ function restoreApiKey() {
 function setTool(id) {
   tool = id;
   skeleton.setTool(id);
+  scene3d?.setTool(id);
   sidebar.setTool(id);
   saveState();
 }
@@ -515,16 +511,19 @@ function bindShortcuts() {
     reset: handleReset,
     tool: setTool,
     togglePin: () => skeleton.togglePin(skeleton.focusJoint()),
-    fitCanvas: () => viewport.fit(),
-    frameSelection,
+    fitCanvas: () => (mode3d ? scene3d.frame(true) : viewport.fit()),
+    frameSelection: () => (mode3d ? scene3d.frame() : frameSelection()),
+    view3d: (id) => scene3d.showView(id),
+    toggleSpace: () => scene3d.toggleSpace(),
   };
 
   window.addEventListener("keydown", (e) => {
-    if (mode3d || (e.target.closest && e.target.closest("input, select, textarea, [contenteditable]"))) return;
+    if (e.target.closest && e.target.closest("input, select, textarea, [contenteditable]")) return;
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
+    const scope = mode3d ? "3d" : "2d";
     const shortcut = SHORTCUTS.find(
-      (s) => s.key === key && s.mod === mod && s.shift === e.shiftKey && !e.altKey
+      (s) => s.key === key && s.mod === mod && s.shift === e.shiftKey && !e.altKey && (!s.scope || s.scope === scope)
     );
     if (!shortcut || !actions[shortcut.action]) return;
     e.preventDefault();

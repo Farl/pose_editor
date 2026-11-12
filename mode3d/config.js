@@ -23,3 +23,39 @@ export const FIGURE = Object.freeze({
   handleRadius: 0.065,
   camera: { fov: 38, minFov: 20, maxFov: 100, fovStep: 1, near: 0.1, far: 20, position: [0, 1, 5], target: [0, 0, 0] },
 });
+
+/// Camera and selection controls of the 3D view (scene.js, axisGizmo.js).
+export const CONTROLS = Object.freeze({
+  /// Directions from the orbit target toward the camera; the figure faces +Z.
+  /// The view keys (SHORTCUTS "view3d") use these ids; the axis gizmo snaps
+  /// to any world axis. Straight up or down leans `verticalLean` toward +Z,
+  /// as a camera looking straight down has no defined "up" for the orbit.
+  views: { front: [0, 0, 1], side: [1, 0, 0], top: [0, 1, 0] },
+  verticalLean: 1e-3,
+  /// Framing (F, 0): the joints fill the view with this much margin (radius
+  /// multiplier), never tighter than `frameMinRadius` world units.
+  framePad: 1.25,
+  frameMinRadius: 0.15,
+  /// Camera moves to a view or a framing over this many milliseconds.
+  transitionMs: 250,
+  /// Orbit inertia (OrbitControls dampingFactor; 0 turns damping off).
+  damping: 0.15,
+  /// A press that moves less than this (CSS px) is a click: it selects what
+  /// is under it, or clears the selection on empty space.
+  tapSlopPx: 6,
+  /// Depth tool: world units per CSS px of vertical drag, as a multiple of
+  /// what one pixel spans at the joint's distance (so it tracks the pointer).
+  depthDragGain: 1,
+  /// Handle colours: normal and selected.
+  handleColor: 0x60b9eb,
+  selectedColor: 0xffffff,
+  /// Corner axis gizmo: overall size, axis length and end-dot radii (CSS px),
+  /// and the colour of each world axis.
+  gizmo: {
+    sizePx: 76,
+    axisPx: 28,
+    endPx: 8,
+    negativeEndPx: 5,
+    colors: { x: "#ef4444", y: "#22c55e", z: "#3b82f6" },
+  },
+});

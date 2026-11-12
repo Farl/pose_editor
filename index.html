@@ -40,10 +40,6 @@
         <button id="mode3dBtn" class="segmented-btn" aria-pressed="false">3D</button>
       </div>
 
-      <div id="transform3dGroup" class="segmented" role="group" aria-label="3D transform" hidden>
-        <button id="move3dBtn" class="segmented-btn" aria-pressed="true">Move</button>
-        <button id="rotate3dBtn" class="segmented-btn" aria-pressed="false">Rotate</button>
-      </div>
       <div class="tool-group tool-group-end">
         <button class="icon-btn shortcuts-btn" popovertarget="shortcutsPanel" data-tip="Shortcuts" aria-label="Shortcuts">
           <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8.5" rx="1.5" /><path d="M4 7h1M7 7h2M11 7h1M5 10h6" /></svg>
@@ -61,7 +57,8 @@
           <canvas id="poseCanvas"></canvas>
         </div>
         <!-- Tool shelf (TOOLS in editorConfig.js): what pressing and dragging a
-             joint does. sidebar.js names each button from its data-tool. -->
+             joint does, in 2D and 3D. sidebar.js names each button from its
+             data-tool. -->
         <div id="toolShelf" class="tool-shelf" role="group" aria-label="Tools">
           <button class="icon-btn" data-tool="select" aria-pressed="false">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v10l2.8-2.6 1.9 4.1 1.6-.7-1.9-4.1h3.8z" /></svg>
