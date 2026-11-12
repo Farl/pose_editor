@@ -40,19 +40,14 @@
       </div>
       <div id="dragModeGroup" class="segmented" role="group" aria-label="Drag mode"></div>
 
-      <div class="tool-group tool-group-end">
-        <button class="icon-btn shortcuts-btn" popovertarget="shortcutsPanel" data-tip="Shortcuts" aria-label="Shortcuts">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8.5" rx="1.5" /><path d="M4 7h1M7 7h2M11 7h1M5 10h6" /></svg>
-        </button>
         <div id="transform3dGroup" class="segmented" role="group" aria-label="3D transform" hidden>
           <button id="move3dBtn" class="segmented-btn" aria-pressed="true">Move</button>
           <button id="rotate3dBtn" class="segmented-btn" aria-pressed="false">Rotate</button>
         </div>
-        <select id="preset3dSelect" class="field" aria-label="3D preset" hidden></select>
-        <button id="finger3dBtn" class="btn" aria-pressed="false" hidden>Finger joints</button>
-        <button id="reset3dBtn" class="btn" hidden>Reset 3D</button>
-        <button id="state3dBtn" class="btn" hidden>Export 3D state</button>
-        <button id="depth3dBtn" class="btn" hidden>Export depth</button>
+      <div class="tool-group tool-group-end">
+        <button class="icon-btn shortcuts-btn" popovertarget="shortcutsPanel" data-tip="Shortcuts" aria-label="Shortcuts">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8.5" rx="1.5" /><path d="M4 7h1M7 7h2M11 7h1M5 10h6" /></svg>
+        </button>
         <button id="downloadBtn" class="btn btn-primary">Export PNG</button>
       </div>
     </header>
@@ -65,7 +60,16 @@
     </main>
 
     <aside class="panel">
-      <section class="panel-section">
+      <details id="controls3dPanel" class="panel-section" hidden>
+        <summary class="panel-title">3D pose</summary>
+
+        <select id="preset3dSelect" class="field" aria-label="3D preset" hidden></select>
+        <button id="finger3dBtn" class="btn" aria-pressed="false" hidden>Finger joints</button>
+        <button id="reset3dBtn" class="btn" hidden>Reset 3D</button>
+        <button id="state3dBtn" class="btn" hidden>Export 3D state</button>
+        <button id="depth3dBtn" class="btn" hidden>Export depth</button>
+      </details>
+      <section id="pose2dPanel" class="panel-section">
         <h2 class="panel-title">Pose</h2>
         <select id="presetSelect" class="field" aria-label="Preset pose"></select>
         <select id="handPoseSelect" class="field" aria-label="Hand pose"></select>

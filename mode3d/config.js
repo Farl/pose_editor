@@ -1,5 +1,9 @@
 /// The procedural mannequin is deliberately separate from external model assets.
 export const FIGURE = Object.freeze({
+  rigDerivation: { earEyeSpan: 0.5, heelLength: 0.2, outerToeWidth: 0.3 },
+  surfaceNormalSign: { palm: -1, sole: 1 },
+  surfaceFacingCosine: 0.7,
+  model: { url: "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r164/examples/models/fbx/Samba%20Dancing.fbx", unitScale: 0.01, headWeight: 0.4 },
   scale: 0.005,
   cameraPitchThreshold: 0.3,
   head: [0.16, 0.22, 0.15],

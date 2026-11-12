@@ -259,7 +259,7 @@ async function set3d(enabled) {
       input.min = FIGURE.camera.minFov; input.max = FIGURE.camera.maxFov; input.step = FIGURE.camera.fovStep;
       const raw = localStorage.getItem(MODE3D_STORAGE_KEY);
       let saved = null; try { saved = raw && JSON.parse(raw); } catch { /* Ignore invalid saved 3D state. */ }
-      scene3d = createScene(sceneHost, save3d, saved);
+      scene3d = await createScene(sceneHost, save3d, saved);
       const container = document.createElement("div");
       container.style.cssText = "position:fixed;left:-10000px;top:0";
       const canvas = document.createElement("canvas"); container.appendChild(canvas); document.body.appendChild(container);
@@ -267,6 +267,10 @@ async function set3d(enabled) {
     } catch (error) { setAiStatus(`Could not load 3D mode: ${error.message}`); return; }
   }
   mode3d = enabled;
+  const exportsHost = enabled ? document.getElementById('controls3dPanel') : document.querySelector('.tool-group-end');
+  exportsHost.appendChild(document.getElementById('downloadBtn'));
+  document.querySelector('.tool-group-end').hidden = enabled;
+  document.getElementById("controls3dPanel").hidden = !enabled;
   if (scene3d) scene3d.setActive(enabled);
   document.getElementById("app").dataset.mode = enabled ? "3d" : "2d";
   sceneHost.hidden = !enabled;
@@ -282,11 +286,11 @@ async function set3d(enabled) {
   document.getElementById("finger3dBtn").hidden = !enabled;
   document.getElementById("preset3dSelect").hidden = !enabled;
   document.getElementById("transform3dGroup").hidden = !enabled;
-  document.querySelectorAll("#dragModeGroup, #undoBtn, #redoBtn, #resetBtn, .panel > .panel-section:first-child, #viewPanel").forEach((el) => { el.hidden = enabled; });
+  document.querySelectorAll("#dragModeGroup, #undoBtn, #redoBtn, #resetBtn, #pose2dPanel, #viewPanel").forEach((el) => { el.hidden = enabled; });
   document.querySelectorAll("#styleSelect, #handDetailGroup, #handDetailLabel").forEach((el) => { el.hidden = enabled; });
   mode2dButton.setAttribute("aria-pressed", String(!enabled));
   mode3dButton.setAttribute("aria-pressed", String(enabled));
-  setAiStatus(enabled ? "Move hands, feet or hips; rotate joints to pose. Orbit by dragging empty space. Hidden joints remain in the guide." : "");
+  setAiStatus(enabled ? (scene3d.modelError || "Move hands, feet or hips; rotate joints to pose. Orbit by dragging empty space. Hidden joints remain in the guide.") : "");
 }
 mode2dButton.addEventListener("click", () => set3d(false));
 mode3dButton.addEventListener("click", () => set3d(true));
@@ -542,8 +546,11 @@ async function handleGenerateImage() {
 
   try {
     const guide = mode3d ? current3dGuide() : { pose, image: skeleton.toDataURL("image/png") };
+    const semantics = mode3d ? scene3d.semanticState() : {};
     const url = await generatePoseImage(currentImageDataUrl, guide.pose, guide.image, {
-      includeHands: !mode3d && styleDrawsHands(styleId),
+      includeHands: mode3d || styleDrawsHands(styleId),
+      worldJoints: semantics.worldJoints || null,
+      surfaceFacing: semantics.surfaceFacing || {},
       view: mode3d ? guide.view : view,
       depthMode: mode3d ? "3d" : "2d",
     });

@@ -95,7 +95,7 @@ export function placeHand(joints, side, gestureId, dir, palmLen) {
 /// Extended (true) or curled (false) for each finger of hand `side`, judged
 /// by how straight the finger's chain is (HANDS.extendedStraightness).
 export function fingerStates(joints, side) {
-  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
   return Object.fromEntries(
     FINGERS.map((f) => {
       const points = Array.from({ length: FINGER_JOINTS }, (_, i) => joints[handKey(f, i + 1, side)]);
@@ -107,7 +107,7 @@ export function fingerStates(joints, side) {
   );
 }
 
-const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+const lerp = (a, b, t) => a && b ? ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, ...(a.z !== undefined || b.z !== undefined ? { z: (a.z || 0) + ((b.z || 0) - (a.z || 0)) * t } : {}) }) : null;
 const mid = (a, b) => lerp(a, b, 0.5);
 
 /// Point or segment [a, b] a body landmark covers, from the pose's joints.
@@ -141,11 +141,13 @@ const BODY_LANDMARKS = [
 ];
 
 function distanceToSegment(p, a, b = a) {
+  if (!p || !a || !b) return Infinity;
   const dx = b.x - a.x;
   const dy = b.y - a.y;
-  const lenSq = dx * dx + dy * dy;
-  const t = lenSq ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq)) : 0;
-  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  const dz = (b.z || 0) - (a.z || 0);
+  const lenSq = dx * dx + dy * dy + dz * dz;
+  const t = lenSq ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy + ((p.z || 0) - (a.z || 0)) * dz) / lenSq)) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy), (p.z || 0) - ((a.z || 0) + t * dz));
 }
 
 /// The body landmark hand `side` touches, or null: the nearest landmark to
@@ -153,13 +155,15 @@ function distanceToSegment(p, a, b = a) {
 /// { label, anchor } with `anchor` the joint that tells the landmark's image
 /// side (null for centre-line landmarks).
 export function handContact(joints, side) {
-  const torso = Math.hypot(joints.neck.x - joints.pelvis.x, joints.neck.y - joints.pelvis.y);
+  if (!joints.neck || !joints.pelvis) return null;
+  const torso = Math.hypot(joints.neck.x - joints.pelvis.x, joints.neck.y - joints.pelvis.y, (joints.neck.z || 0) - (joints.pelvis.z || 0));
   const reach = torso * HANDS.contactDistance;
   const hand = [joints[`wrist_${side}`], ...fingerKeys(side).map((k) => joints[k])];
   let best = null;
   for (const lm of BODY_LANDMARKS) {
     for (const s of lm.id.includes("<s>") ? ["r", "l"] : [null]) {
       const segment = lm.at(joints, s);
+      if (segment.some(p => !p)) continue;
       const d = Math.min(...hand.map((p) => distanceToSegment(p, ...segment)));
       if (d <= reach && (!best || d < best.d)) {
         best = { d, label: lm.label, anchor: lm.anchor ? lm.anchor.replace("<s>", s) : null };

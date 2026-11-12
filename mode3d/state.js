@@ -3,7 +3,7 @@
 export function serialize3dState(positions, camera, depthRange) {
   return {
     version: 1,
-    model: 'procedural-v1',
+    model: 'samba-r164',
     positions: Object.fromEntries(Object.entries(positions).map(([key, point]) => [key, [...point]])),
     camera: { ...camera, position: [...camera.position], target: [...camera.target] },
     depthRange: { ...depthRange },

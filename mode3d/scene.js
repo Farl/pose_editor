@@ -8,12 +8,14 @@ import { buildPresetPose, POSE_PRESETS } from '../posePresets.js';
 import { projectPoint, cameraHeight, relativeDepth, depthRange, convexHull } from './project.js';
 import { solveTwoBone } from './ik.js';
 import { surfaceFrame } from './frame.js';
+import { semanticState as deriveSemantics } from './semantics.js';
+import { loadBody } from './model.js';
 import { serialize3dState } from './state.js';
 
 /// A self-authored articulated volumetric mannequin. Joint coordinates are
 /// world-space, and moving a joint carries its descendants; no external mesh or
 /// implied finger tracking is involved. Geometry is rebuilt from the rig.
-export function createScene(host, onChange, initialState) {
+export async function createScene(host, onChange, initialState) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(1);
   renderer.setSize(CANVAS.size, CANVAS.size);
@@ -51,10 +53,7 @@ export function createScene(host, onChange, initialState) {
     }
   }
   scaleFeet();
-  if (initialState?.positions) for (const key of JOINT_KEYS) {
-    const p = initialState.positions[key];
-    if (Array.isArray(p) && p.length === 3 && p.every(Number.isFinite)) positions[key].fromArray(p);
-  }
+  if (Number.isFinite(initialState?.camera?.near) && initialState.camera.near > 0 && Number.isFinite(initialState?.camera?.far) && initialState.camera.far > initialState.camera.near) { camera.near = initialState.camera.near; camera.far = initialState.camera.far; camera.updateProjectionMatrix(); }
   if (initialState?.camera?.position) camera.position.fromArray(initialState.camera.position);
   if (initialState?.camera?.target) orbit.target.fromArray(initialState.camera.target);
   if (Number.isFinite(initialState?.camera?.fov) && initialState.camera.fov > 1 && initialState.camera.fov < 179) {
@@ -67,6 +66,17 @@ export function createScene(host, onChange, initialState) {
   function ellipsoid(center, scale, target = body, mat = material) {
     const mesh = new THREE.Mesh(sphere, mat); mesh.position.copy(center); mesh.scale.set(...scale); target.add(mesh); return mesh;
   }
+  let skin = null, modelError = null;
+  try { skin = await loadBody(scene); }
+  catch (error) { modelError = `Samba could not load: ${error.message}. Using procedural fallback.`; }
+  if (skin) for(const key of JOINT_KEYS) positions[key].fromArray(skin.bindRig[key]);
+  const presetBase = { joints: Object.fromEntries(JOINT_KEYS.map(key=>[key,{x:CANVAS.size/2+positions[key].x/FIGURE.scale,y:CANVAS.size/2-positions[key].y/FIGURE.scale}])) };
+  if (initialState?.positions) for (const key of JOINT_KEYS) {
+    const p = initialState.positions[key];
+    if (Array.isArray(p) && p.length === 3 && p.every(Number.isFinite)) positions[key].fromArray(p);
+  }
+
+  body.visible = !skin;
   let headMesh;
   function orientSurface(mesh, origin, longPoint, sidePoint) {
     const { x, y, z } = surfaceFrame(origin.toArray(), longPoint.toArray(), sidePoint.toArray());
@@ -100,6 +110,7 @@ export function createScene(host, onChange, initialState) {
         orientSurface(palm, wrist, middle, positions[`index1_${side}`]);
       }
     }
+    skin?.sync(positions);
     for (const key of ['pelvis', 'neck', 'shoulder_r', 'elbow_r', 'wrist_r', 'shoulder_l', 'elbow_l', 'wrist_l', 'hip_r', 'knee_r', 'ankle_r', 'hip_l', 'knee_l', 'ankle_l']) {
       if (transform.mode === 'translate' && key !== 'pelvis' && !IK_CHAINS[key]) continue;
       const handle = ellipsoid(positions[key], Array(3).fill(FIGURE.handleRadius), handles, handleMaterial);
@@ -151,18 +162,26 @@ export function createScene(host, onChange, initialState) {
   }
   rebuild(); setActive(true);
   orbit.addEventListener('end', onChange);
+  function surfaceVertices(headOnly = false) {
+    if (skin) return skin.surfaceVertices(headOnly);
+    body.updateWorldMatrix(true, true);
+    const meshes = headOnly ? [headMesh] : body.children;
+    return meshes.flatMap(mesh => {
+      const a = mesh.geometry.getAttribute('position');
+      return Array.from({length:a.count}, (_,i)=>new THREE.Vector3().fromBufferAttribute(a,i).applyMatrix4(mesh.matrixWorld));
+    });
+  }
   function surfaceDepthRange() {
     camera.updateMatrixWorld(); body.updateWorldMatrix(true, true);
-    const bounds = body.children.map((mesh) => {
-      const matrix = new THREE.Matrix4().multiplyMatrices(camera.matrixWorldInverse, mesh.matrixWorld);
-      const e = matrix.elements, distance = -e[14], radius = Math.hypot(e[2], e[6], e[10]);
-      return { near: distance - radius, far: distance + radius };
-    });
+    const distances=surfaceVertices().map(p=>-p.applyMatrix4(camera.matrixWorldInverse).z);
+    const bounds=[{near:distances.reduce((a,b)=>Math.min(a,b),Infinity),far:distances.reduce((a,b)=>Math.max(a,b),-Infinity)}];
     return depthRange(bounds, camera);
   }
+  const coordinates = () => Object.fromEntries(JOINT_KEYS.map(key => [key, positions[key].toArray()]));
   function state() {
-    return serialize3dState(Object.fromEntries(JOINT_KEYS.map(key => [key, positions[key].toArray()])),
+    const saved = serialize3dState(coordinates(),
       { position: camera.position.toArray(), target: orbit.target.toArray(), fov: camera.fov, near: camera.near, far: camera.far }, surfaceDepthRange());
+    return { ...saved, model: skin ? "samba-r164" : "procedural-fallback" };
   }
   function project() {
     camera.updateMatrixWorld();
@@ -174,13 +193,29 @@ export function createScene(host, onChange, initialState) {
   }
   /// Render the same camera and geometry as linear view-space depth. Values
   /// reserve zero for background; surface bounds map to 255 and 1. No lighting or tone mapping.
+  function surfacePNG() {
+    const visible=handles.visible, transformVisible=transform.visible;
+    handles.visible=false;transform.visible=false;
+    try { renderer.render(scene,camera);return renderer.domElement.toDataURL('image/png'); }
+    finally { handles.visible=visible;transform.visible=transformVisible;render(); }
+  }
   function depthPNG() {
     const oldBackground = scene.background, oldOverride = scene.overrideMaterial;
     const bounds = surfaceDepthRange();
     const visible = handles.visible, transformVisible = transform.visible;
     const depthMaterial = new THREE.ShaderMaterial({
       uniforms: { near: { value: bounds.near }, far: { value: bounds.far } },
-      vertexShader: `varying float distanceFromCamera; void main() { vec4 v = modelViewMatrix * vec4(position, 1.0); distanceFromCamera = -v.z; gl_Position = projectionMatrix * v; }`,
+      vertexShader: `
+        #include <common>
+        #include <skinning_pars_vertex>
+        varying float distanceFromCamera;
+        void main() {
+          #include <skinbase_vertex>
+          #include <begin_vertex>
+          #include <skinning_vertex>
+          vec4 v = modelViewMatrix * vec4(transformed, 1.0);
+          distanceFromCamera = -v.z; gl_Position = projectionMatrix * v;
+        }`,
       fragmentShader: `uniform float near; uniform float far; varying float distanceFromCamera; void main() { float d = (1.0 + 254.0 * clamp((far - distanceFromCamera) / (far - near), 0.0, 1.0)) / 255.0; gl_FragColor = vec4(vec3(d), 1.0); }`,
     });
     handles.visible = false; transform.visible = false;
@@ -193,12 +228,12 @@ export function createScene(host, onChange, initialState) {
   }
   function applyPreset(id) {
     if (!(id in POSE_PRESETS)) return;
-    const preset = buildPresetPose(id, createDefaultPose()).joints;
+    const preset = buildPresetPose(id, presetBase).joints;
     for (const key of JOINT_KEYS) {
       const p = preset[key];
       positions[key].set((p.x - CANVAS.size / 2) * FIGURE.scale, (CANVAS.size / 2 - p.y) * FIGURE.scale, 0);
     }
-    scaleFeet(); transform.detach(); selection = null; rebuild(); onChange();
+    transform.detach(); selection = null; rebuild(); onChange();
   }
   function reset() {
     camera.position.fromArray(c.position); orbit.target.fromArray(c.target);
@@ -206,13 +241,11 @@ export function createScene(host, onChange, initialState) {
     applyPreset('stand');
   }
   function headBounds() {
-    camera.updateMatrixWorld(); headMesh.updateWorldMatrix(true, false);
-    const vertices = headMesh.geometry.getAttribute('position'), points = [];
-    for (let i = 0; i < vertices.count; i++) {
-      const p = new THREE.Vector3().fromBufferAttribute(vertices, i).applyMatrix4(headMesh.matrixWorld).applyMatrix4(camera.matrixWorldInverse);
-      const q = projectPoint(p, camera);
-      points.push(q && {x: q.x * CANVAS.size, y: q.y * CANVAS.size});
-    }
+    camera.updateMatrixWorld();
+    const points = surfaceVertices(true).map(point=>{
+      const q=projectPoint(point.applyMatrix4(camera.matrixWorldInverse),camera);
+      return q && {x:q.x*CANVAS.size,y:q.y*CANVAS.size};
+    });
     return convexHull(points);
   }
   function view() {
@@ -225,7 +258,7 @@ export function createScene(host, onChange, initialState) {
     for (const part of ['wrist', 'ankle']) for (const side of ['r', 'l']) {
       const key = `${part}_${side}`, twin = `${part}_${side === 'r' ? 'l' : 'r'}`;
       const p = projected[key], other = projected[twin];
-      const inFrame = p && other && [p, other].every(q => q.x >= 0 && q.x <= CANVAS.size && q.y >= 0 && q.y <= CANVAS.size);
+      const inFrame = p && p.x >= 0 && p.x <= CANVAS.size && p.y >= 0 && p.y <= CANVAS.size;
       const point = positions[key].clone().applyMatrix4(camera.matrixWorldInverse);
       depth[key] = inFrame ? relativeDepth(-point.z, -torso.z, torsoLength) : 0;
     }
@@ -237,5 +270,6 @@ export function createScene(host, onChange, initialState) {
   }
   function setMode(mode) { transform.detach(); selection = null; transform.setMode(mode); rebuild(); }
   function setFingerHandles(visible) { showFingers = visible; rebuild(); }
-  return { state, project, view, headBounds, depthPNG, reset, applyPreset, setMode, setFov, setFingerHandles, setActive, dispose() { cancelAnimationFrame(raf); transform.dispose(); orbit.dispose(); renderer.dispose(); renderer.domElement.remove(); } };
+  function semanticState() { return deriveSemantics(coordinates(), camera.position.toArray()); }
+  return { surfacePNG, alignment: () => skin?.alignment(positions) || [], modelError, semanticState, state, project, view, headBounds, depthPNG, reset, applyPreset, setMode, setFov, setFingerHandles, setActive, dispose() { cancelAnimationFrame(raf); transform.dispose(); orbit.dispose(); skin?.dispose(); renderer.dispose(); renderer.domElement.remove(); } };
 }

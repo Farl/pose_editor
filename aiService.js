@@ -1,6 +1,6 @@
 import { FINGERS, fingerStates, handContact } from "./handPoses.js";
 import { DEPTH_ENDS, isDefaultView, isHand } from "./poseView.js";
-import { VIEW } from "./editorConfig.js";
+import { CANVAS, VIEW } from "./editorConfig.js";
 
 const API_TIMEOUT_MS = 60_000;
 
@@ -79,27 +79,27 @@ const listWords = (words) => (words.length > 1 ? `${words.slice(0, -1).join(", "
 /// "image-left" or "image-right": where `key` sits relative to its other-side twin.
 function imageSide(joints, key) {
   const twin = key.endsWith("_r") ? key.replace(/_r$/, "_l") : key.replace(/_l$/, "_r");
-  return joints[key].x <= joints[twin].x ? "image-left" : "image-right";
+  return joints[key].x <= (joints[twin]?.x ?? CANVAS.size / 2) ? "image-left" : "image-right";
 }
 
 /// One line per hand saying which fingers are extended or curled, and what
 /// part of the body the hand touches. Hands and body parts are named by
 /// where they are in the image, which image models follow more reliably
 /// than the figure's own left and right.
-function describeHands(joints) {
-  const sides = ["r", "l"].sort((a, b) => joints[`wrist_${a}`].x - joints[`wrist_${b}`].x);
+function describeHands(joints, worldJoints = joints) {
+  const sides = ["r", "l"].filter(side => joints[`wrist_${side}`] && FINGERS.every(f => [1,2,3,4].every(i => worldJoints[`${f}${i}_${side}`]))).sort((a, b) => joints[`wrist_${a}`].x - joints[`wrist_${b}`].x);
   return sides.map((side, i) => {
-    const states = fingerStates(joints, side);
+    const states = fingerStates(worldJoints, side);
     const extended = FINGERS.filter((f) => states[f]);
     const curled = FINGERS.filter((f) => !states[f]);
-    const where = i === 0 ? "image-left" : "image-right";
+    const where = sides.length === 2 ? (i === 0 ? "image-left" : "image-right") : imageSide(joints, `wrist_${side}`);
     let shape;
     if (!curled.length) shape = "open, all fingers extended";
     else if (!extended.length) shape = "a closed fist, all fingers curled into the palm";
     else shape = `${listWords(extended)} extended; ${listWords(curled)} curled into the palm`;
-    const contact = handContact(joints, side);
+    const contact = handContact(worldJoints, side);
     const touch = contact
-      ? `; touching the ${contact.anchor ? `${imageSide(joints, contact.anchor)} ` : ""}${contact.label}`
+      ? `; touching the ${contact.anchor && joints[contact.anchor] ? `${imageSide(joints, contact.anchor)} ` : ""}${contact.label}`
       : "";
     return `The ${where} hand: ${shape}${touch}.`;
   });
@@ -128,16 +128,14 @@ const DEPTH_PROMPTS = {
 /// Lines for the view (poseView.js): camera height, hands and feet set toward
 /// or away from the camera (named by image side, like describeHands), and a
 /// big head. Empty for the default view, so the prompt is then unchanged.
-function describeView(joints, view, depthMode = "2d") {
+function describeView(joints, view, depthMode = "2d", surfaceFacing = {}) {
   if (!view || isDefaultView(view)) return [];
   const lines = [];
   if (CAMERA_PROMPTS[view.camera]) {
-    const cameraText = depthMode === "3d"
-      ? `Camera: ${view.camera} angle relative to the figure.`
-      : CAMERA_PROMPTS[view.camera];
+    const cameraText = CAMERA_PROMPTS[view.camera];
     lines.push(cameraText);
   }
-  const ends = DEPTH_ENDS.filter((k) => Math.abs(view.depth[k]) >= VIEW.depthNear).sort(
+  const ends = DEPTH_ENDS.filter((k) => joints[k] && Math.abs(view.depth[k]) >= VIEW.depthNear).sort(
     (a, b) => joints[a].x - joints[b].x
   );
   if (ends.length) lines.push("Limbs drawn thicker in IMAGE 1 are closer to the camera; thinner ones are further away.");
@@ -145,9 +143,9 @@ function describeView(joints, view, depthMode = "2d") {
     const z = view.depth[key];
     const level = z >= VIEW.depthStrong ? "strong" : z > 0 ? "near" : "far";
     const part = isHand(key) ? "hand" : "foot";
-    const description = depthMode === "3d"
-      ? (z > 0 ? "is closer to the camera than the torso" : "is farther from the camera than the torso")
-      : DEPTH_PROMPTS[part][level];
+    // In 3D, distance alone cannot establish palm/sole orientation.
+    const safeLevel = depthMode === "3d" && level === "strong" && !surfaceFacing[key] ? "near" : level;
+    const description = DEPTH_PROMPTS[part][safeLevel];
     lines.push(`The ${imageSide(joints, key)} ${part} ${description}.`);
   }
   if (view.headScale > VIEW.head.min) {
@@ -312,9 +310,9 @@ async function generateWithPollinations(imageDataUrl, poseImageDataUrl, prompt, 
 /// Re-draw an uploaded image so the main figure matches the given pose.
 /// `includeHands`: the guide shows finger keypoints, so the prompt also
 /// spells out each hand's shape. `view`: depth and camera (poseView.js).
-export async function generatePoseImage(imageDataUrl, pose, poseImageDataUrl, { includeHands = false, view = null, depthMode = "2d" } = {}) {
+export async function generatePoseImage(imageDataUrl, pose, poseImageDataUrl, { includeHands = false, view = null, depthMode = "2d", worldJoints = null, surfaceFacing = {} } = {}) {
   const config = getConfig();
-  const prompt = getPrompt(includeHands ? describeHands(pose.joints) : [], describeView(pose.joints, view, depthMode));
+  const prompt = getPrompt(includeHands ? describeHands(pose.joints, worldJoints || pose.joints) : [], describeView(pose.joints, view, depthMode, surfaceFacing));
   const provider = config.AI_PROVIDER || "pollinations";
 
   try {
