@@ -260,8 +260,9 @@ export async function createScene(host, onChange, initialState) {
       for (const k of descendants(end)) positions[k].add(endDelta);
     } else if (limb) {
       const [root, , end] = limb;
-      // The target stands in for the elbow / knee as the bend-side hint.
-      const result = solveTwoBone(positions[root].toArray(), target.toArray(), positions[end].toArray(), positions[end].toArray());
+      // The target is the pole the elbow / knee bends toward; the limb keeps its lengths.
+      const [r, m, e] = [root, key, end].map((k) => positions[k].toArray());
+      const result = solveTwoBone(r, m, e, e, target.toArray());
       positions[key].fromArray(result.mid);
     } else {
       const pivot = positions[JOINT_PARENT[key]].clone();

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
-import { jointForBone, rigFromBonePositions } from "./rigMap.js";
+import { jointForBone, rigFromBonePositions, CARRIED_BONES, carryPoint } from "./rigMap.js";
 import { surfaceFrame } from "./frame.js";
 import { FIGURE } from "./config.js";
 
@@ -45,15 +45,27 @@ export async function loadBody(scene) {
     .getWorldPosition(new THREE.Vector3())
     .sub(sourceOrigin)
     .sub(new THREE.Vector3(...bindRig.nose));
+  const suffixOf = (bone) => bone.name.replace(/^mixamorig:?/i, "");
+  /// Bind place of each carried bone (CARRIED_BONES), pelvis origin like bindRig.
+  const carriedBind = new Map(
+    bones
+      .filter((b) => b.parent.name !== b.name && CARRIED_BONES[suffixOf(b)])
+      .map((b) => [b, new THREE.Vector3(...bonePositions[b.name]).sub(sourceOrigin).toArray()]),
+  );
   const targetFor = (bone, positions) => {
     const joint = jointForBone(bone.name);
     // Head is a neck-side pivot, not the visible nose. Preserve its bind
     // offset instead of translating the entire head mesh onto the face point.
     if (joint === "nose") return positions.nose.clone().add(headOffset);
     if (joint) return positions[joint];
-    const suffix = bone.name.replace(/^mixamorig:?/i, "");
-    if (suffix === "Spine1") return positions.waist.clone().lerp(positions.neck, 0.5);
-    if (suffix === "Spine2") return positions.neck.clone();
+    const suffix = suffixOf(bone);
+    const carried = CARRIED_BONES[suffix];
+    if (carried) {
+      const [from, to] = carried;
+      return new THREE.Vector3(
+        ...carryPoint(carriedBind.get(bone), bindRig[from], bindRig[to], positions[from].toArray(), positions[to].toArray()),
+      );
+    }
     if (suffix === "HeadTop_End") return positions.nose.clone().add(positions.nose.clone().sub(positions.neck));
     return null;
   };

@@ -52,3 +52,35 @@ export function rigFromBonePositions(bones) {
   const origin = rig.pelvis;
   return Object.fromEntries(Object.entries(rig).map(([key, p]) => [key, p.map((v, i) => v - origin[i])]));
 }
+
+/// Mixamo bones with no rig joint that ride on a rig bone, by suffix:
+/// [from, to] joints of that bone. Each keeps its bind-pose place on the bone
+/// (carryPoint), so the chest skin stays below the neck and turns with the spine.
+export const CARRIED_BONES = { Spine1: ["waist", "neck"], Spine2: ["waist", "neck"] };
+
+const sub = (a, b) => a.map((v, i) => v - b[i]);
+const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const norm = (a) => Math.hypot(...a);
+
+/// `point` on the bind bone `bindFrom`-`bindTo`, carried onto the current bone
+/// `from`-`to`: turned by the shortest swing between the two bone directions
+/// (Rodrigues) and scaled by their length ratio. All [x, y, z] arrays.
+export function carryPoint(point, bindFrom, bindTo, from, to) {
+  const a = sub(bindTo, bindFrom),
+    b = sub(to, from);
+  const scale = norm(b) / norm(a) || 1;
+  const u = a.map((v) => v / norm(a)),
+    w = b.map((v) => v / (norm(b) || 1));
+  const axis = cross(u, w),
+    sin = norm(axis),
+    cos = dot(u, w);
+  let p = sub(point, bindFrom);
+  if (sin > 1e-12) {
+    const k = axis.map((v) => v / sin);
+    const kxp = cross(k, p),
+      kp = dot(k, p);
+    p = p.map((v, i) => v * cos + kxp[i] * sin + k[i] * kp * (1 - cos));
+  }
+  return p.map((v, i) => from[i] + v * scale);
+}
